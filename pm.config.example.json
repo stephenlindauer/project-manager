@@ -1,0 +1,18 @@
+{
+  "//": "Copy to pm.config.json to enable. All fields optional; env vars override.",
+
+  "host": "127.0.0.1",
+  "//host": "Set to 0.0.0.0 to listen on all interfaces (LAN access). Pair with auth.",
+
+  "https": {
+    "enabled": false,
+    "//": "Run `npm run generate-cert` first. Defaults to certs/pm-cert.pem + pm-key.pem.",
+    "cert": "certs/pm-cert.pem",
+    "key": "certs/pm-key.pem"
+  },
+
+  "auth": {
+    "enabled": false,
+    "//": "Run `npm run create-user` to create the login. Required if host is not loopback."
+  }
+}

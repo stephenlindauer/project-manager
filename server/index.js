@@ -1,6 +1,8 @@
 import http from 'node:http'
+import https from 'node:https'
 import path from 'node:path'
 import fs from 'node:fs/promises'
+import fss from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import express from 'express'
 import { WebSocketServer } from 'ws'
@@ -12,11 +14,15 @@ import * as G from './git.js'
 import * as T from './terminals.js'
 import * as Tasks from './tasks.js'
 import * as GH from './gh.js'
+import * as Auth from './auth.js'
 import { run } from './exec.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
 app.use(express.json({ limit: '2mb' }))
+
+Auth.loadAuth()
+const cookieOpts = { secure: config.https.enabled }
 
 /** Resolve `:id` to a node, or 404. Every node-scoped route funnels through this. */
 function node(req, res) {
@@ -33,6 +39,39 @@ const wrap = (fn) => (req, res) =>
     console.error('[api]', req.path, e)
     if (!res.headersSent) res.status(500).json({ error: String(e?.message ?? e) })
   })
+
+// ---------------------------------------------------------------- auth
+// These three are reachable without a session so the login flow can run; every
+// other /api and /events route is guarded by requireAuth below.
+
+app.get('/api/auth', (req, res) => {
+  res.json({
+    enabled: Auth.isEnabled(),
+    configured: Auth.isConfigured(),
+    authed: !Auth.isEnabled() || Auth.isRequestAuthed(req),
+  })
+})
+
+// A fixed delay on every attempt blunts online brute-forcing without needing a
+// stateful rate limiter.
+const LOGIN_DELAY_MS = 500
+app.post('/api/login', wrap(async (req, res) => {
+  await new Promise((r) => setTimeout(r, LOGIN_DELAY_MS))
+  const { username, password } = req.body ?? {}
+  if (await Auth.verifyCredentials(username, password)) {
+    res.setHeader('Set-Cookie', Auth.sessionCookie(username, cookieOpts))
+    return res.json({ ok: true })
+  }
+  res.status(401).json({ error: 'invalid username or password' })
+}))
+
+app.post('/api/logout', (req, res) => {
+  res.setHeader('Set-Cookie', Auth.clearCookie())
+  res.json({ ok: true })
+})
+
+app.use('/api', Auth.requireAuth)
+app.use('/events', Auth.requireAuth)
 
 // ---------------------------------------------------------------- meta
 
@@ -263,12 +302,23 @@ if (process.env.NODE_ENV === 'production') {
 
 // ------------------------------------------------------------- websocket
 
-const server = http.createServer(app)
+const server = config.https.enabled
+  ? https.createServer(
+      { cert: fss.readFileSync(config.https.cert), key: fss.readFileSync(config.https.key) },
+      app,
+    )
+  : http.createServer(app)
 const wss = new WebSocketServer({ noServer: true })
 
 server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url, 'http://localhost')
   if (url.pathname !== '/pty') return socket.destroy()
+  // The /pty socket is a full shell; gate it on the same session cookie the page
+  // used. The cookie rides along on the upgrade request automatically.
+  if (Auth.isEnabled() && !Auth.isRequestAuthed(req)) {
+    socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
+    return socket.destroy()
+  }
   wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req, url))
 })
 
@@ -350,13 +400,37 @@ function attachRunner(ws, nodeId, name) {
 // ----------------------------------------------------------------- boot
 
 const backend = await T.detectTmux()
-server.listen(config.port, '127.0.0.1', async () => {
-  console.log(`[pm] api        http://127.0.0.1:${config.port}`)
-  console.log(`[pm] root       ${config.projectsRoot}`)
+const scheme = config.https.enabled ? 'https' : 'http'
+const shownHost = config.host === '0.0.0.0' ? '<this-machine-ip>' : config.host
+
+server.listen(config.port, config.host, async () => {
+  console.log(`[pm] server     ${scheme}://${shownHost}:${config.port}`)
+  console.log(`[pm] bind       ${config.host}${config.host === '0.0.0.0' ? ' (all interfaces)' : ' (loopback only)'}`)
+  console.log(`[pm] tls        ${config.https.enabled ? 'on' : 'off'}`)
+  console.log(`[pm] auth       ${authStatusLine()}`)
   console.log(`[pm] terminals  ${backend ? 'tmux (persistent)' : 'node-pty (tmux not found)'}`)
+
+  // The app hands out full shell access. Loudly flag the dangerous combination
+  // of network exposure without a login.
+  if (config.host !== '127.0.0.1' && config.host !== 'localhost' && !Auth.isEnabled()) {
+    console.warn('\n\x1b[41m\x1b[97m  WARNING  \x1b[0m ' +
+      '\x1b[91mListening on the network with NO authentication.\x1b[0m')
+    console.warn('           Anyone who can reach this port gets a shell on this machine.')
+    console.warn('           Enable auth: set "auth": true in pm.config.json and run `npm run create-user`.\n')
+  }
+  if (config.auth.enabled && !Auth.isConfigured()) {
+    console.warn('\x1b[93m[pm] auth is enabled but no user exists — run `npm run create-user`. ' +
+      'All requests will 503 until then.\x1b[0m')
+  }
+
   await store.rescan()
   console.log(`[pm] indexed    ${store.projects.length} projects, ${store.nodes.length} worktrees`)
 })
+
+function authStatusLine() {
+  if (!config.auth.enabled) return 'off (open access)'
+  return Auth.isConfigured() ? 'on' : 'ENABLED BUT NO USER — run npm run create-user'
+}
 
 // Keep git state fresh in the background so sidebar badges don't go stale.
 setInterval(() => store.refreshAll().catch(() => {}), 20_000)

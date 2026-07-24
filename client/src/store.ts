@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { api } from './api'
+import { api, authApi, setUnauthorizedHandler } from './api'
 import type { Node, Project, Runner, SessionInfo, TabId } from './types'
 
 export const TABS: { id: TabId; label: string; hint: string }[] = [
@@ -23,9 +23,13 @@ type State = {
   paletteOpen: boolean
   newBranchFor: string | null
   loading: boolean
+  /** null = auth state unknown; true = login screen required; false = past the gate. */
+  needsLogin: boolean | null
   meta: { projectsRoot: string; terminalBackend: string; ghAvailable: boolean } | null
 
   load: () => Promise<void>
+  login: (username: string, password: string) => Promise<void>
+  logout: () => Promise<void>
   rescan: () => Promise<void>
   setActiveNode: (id: string) => void
   setTab: (tab: TabId) => void
@@ -95,15 +99,36 @@ export const useStore = create<State>((set, get) => ({
   paletteOpen: false,
   newBranchFor: null,
   loading: true,
+  needsLogin: null,
   meta: null,
 
   load: async () => {
+    // A 401 anywhere (expired session, etc.) bounces the whole app to login.
+    setUnauthorizedHandler(() => set({ needsLogin: true, loading: false }))
+
+    const auth = await authApi.status().catch(() => ({ enabled: false, configured: true, authed: true }))
+    if (auth.enabled && !auth.authed) {
+      set({ needsLogin: true, loading: false })
+      return
+    }
+
     const [meta, data] = await Promise.all([api.meta(), api.projects()])
     const nodes = visibleNodes(data.nodes)
     const remembered = localStorage.getItem('pm:activeNode')
     const active = nodes.find((n) => n.id === remembered)?.id ?? nodes[0]?.id ?? null
-    set({ meta, projects: data.projects, nodes, activeNodeId: active, loading: false })
+    set({ meta, projects: data.projects, nodes, activeNodeId: active, needsLogin: false, loading: false })
     connectEvents(set, get)
+  },
+
+  login: async (username, password) => {
+    await authApi.login(username, password)
+    set({ needsLogin: false, loading: true })
+    await get().load()
+  },
+
+  logout: async () => {
+    await authApi.logout().catch(() => {})
+    set({ needsLogin: true })
   },
 
   rescan: async () => {

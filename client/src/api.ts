@@ -1,11 +1,16 @@
 import type { Changes, Node, Project, PullRequest, Runner, Script, Summary } from './types'
 
+/** Notified whenever a request 401s, so the app can drop back to the login gate. */
+let onUnauthorized: (() => void) | null = null
+export const setUnauthorizedHandler = (fn: () => void) => { onUnauthorized = fn }
+
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     ...init,
     headers: init?.body ? { 'Content-Type': 'application/json' } : undefined,
   })
   if (!res.ok) {
+    if (res.status === 401) onUnauthorized?.()
     const detail = await res.json().catch(() => ({ error: res.statusText }))
     throw new Error(detail.error ?? res.statusText)
   }
@@ -14,6 +19,14 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
 
 const post = <T,>(url: string, body?: unknown) =>
   json<T>(url, { method: 'POST', body: body ? JSON.stringify(body) : undefined })
+
+export type AuthStatus = { enabled: boolean; configured: boolean; authed: boolean }
+export const authApi = {
+  status: () => json<AuthStatus>('/api/auth'),
+  login: (username: string, password: string) =>
+    json<{ ok: boolean }>('/api/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
+  logout: () => json<{ ok: boolean }>('/api/logout', { method: 'POST' }),
+}
 
 export const api = {
   meta: () => json<{ projectsRoot: string; terminalBackend: string; ghAvailable: boolean }>('/api/meta'),

@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { Login } from './components/Login'
 import { MainPanel } from './components/MainPanel'
 import { NewBranchDialog } from './components/NewBranchDialog'
 import { Palette } from './components/Palette'
@@ -7,12 +8,15 @@ import { useActiveNode, useStore } from './store'
 
 export default function App() {
   const loading = useStore((s) => s.loading)
+  const needsLogin = useStore((s) => s.needsLogin)
   const load = useStore((s) => s.load)
   const node = useActiveNode()
   const meta = useStore((s) => s.meta)
 
   useEffect(() => { load().catch((e) => console.error(e)) }, [load])
   useGlobalShortcuts()
+
+  if (needsLogin) return <Login />
 
   if (loading) {
     return <div className="grid h-full place-items-center text-muted">Scanning ~/Projects…</div>

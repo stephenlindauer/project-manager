@@ -4,3 +4,8 @@ dist/
 .DS_Store
 .env
 .env.local
+
+# Local deployment config and secrets — never commit these
+pm.config.json
+.pm-auth.json
+certs/

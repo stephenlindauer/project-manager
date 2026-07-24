@@ -65,6 +65,46 @@ Environment variables read at startup (see `server/config.js`):
 | `PM_MAX_DEPTH` | `3` | How deep to look for repos |
 | `PM_PORT` | `5274` | API/WebSocket port |
 | `PM_CLAUDE_COMMAND` | `claude` | Command launched in the Claude tab |
+| `PM_HOST` | `127.0.0.1` | Interface to bind (`0.0.0.0` = all) |
+| `PM_HTTPS` | `0` | Serve over TLS |
+| `PM_TLS_CERT` / `PM_TLS_KEY` | `certs/pm-*.pem` | Certificate paths |
+| `PM_AUTH` | `0` | Require login |
+| `PM_AUTH_FILE` | `.pm-auth.json` | Credential file |
+
+The same settings can live in a **`pm.config.json`** at the repo root instead of env
+vars (env vars win). Copy `pm.config.example.json` to start. That file, the auth
+file, and `certs/` are gitignored.
+
+## Remote access & authentication
+
+By default the app binds to loopback only and has no login — fine for local use.
+**It hands out full shell access to every project, so never expose it on a network
+without authentication.** The server prints a red warning if you do.
+
+To run it over HTTPS, on the LAN, behind a login:
+
+```bash
+npm run generate-cert    # self-signed cert (localhost + LAN IPs) → certs/
+npm run create-user      # prompts for a username + password → .pm-auth.json
+```
+
+Then set in `pm.config.json`:
+
+```json
+{
+  "host": "0.0.0.0",
+  "https": { "enabled": true },
+  "auth": { "enabled": true }
+}
+```
+
+Restart. You'll reach it at `https://<machine-ip>:5273` (dev) and be asked to log in.
+The certificate is self-signed, so browsers warn once per device — that's expected.
+
+- Passwords are stored as scrypt hashes; sessions are HMAC-signed cookies (30-day).
+- Auth covers the API, the SSE stream, **and** the `/pty` terminal WebSocket.
+- `create-user` is re-runnable to change the password; the cookie secret is preserved
+  so other devices stay logged in. Delete `.pm-auth.json` to reset everything.
 
 ## Notes
 

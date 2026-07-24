@@ -123,3 +123,22 @@ any session.
 - Colors come from the `@theme` block in `index.css`; each neon accent has an
   assigned meaning (cyan = selection, pink = branches, green = running/ahead,
   amber = dirty, red = failing). Check contrast before dimming small text.
+
+## Deployment & auth
+
+Optional, all off by default (loopback / http / no login), configured via env vars
+or `pm.config.json` (see `server/config.js`). Setup scripts: `npm run generate-cert`
+and `npm run create-user`.
+
+- **The app is a full RCE surface** (every terminal is a real shell). Any change
+  that widens exposure — binding, CORS, a new unauthenticated route — must keep the
+  `/pty` WebSocket and `/events` SSE behind `Auth.requireAuth` / the upgrade check
+  in `server/index.js`. The socket carries the session cookie automatically.
+- Auth is single-user: scrypt password hash + HMAC-signed cookie, both stored in
+  `.pm-auth.json` (gitignored, 0600). `server/auth.js` owns all of it; use its
+  `safeEqual` for any secret comparison (timing-safe).
+- The client treats any API `401` as "show the login gate" (`setUnauthorizedHandler`
+  in `api.ts`). `/api/auth`, `/api/login`, `/api/logout` are the only unguarded
+  routes.
+- Defaults must stay backward-compatible: with no config, `requireAuth` is a no-op
+  and behavior is identical to the pre-auth app.
