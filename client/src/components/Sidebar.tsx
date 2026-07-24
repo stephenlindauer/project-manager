@@ -85,6 +85,7 @@ export function Sidebar() {
                     sessions={sessions}
                     runners={runners}
                     onNewBranch={() => setNewBranchFor(projectId)}
+                    indent={!!group}
                   />
                 )
               }
@@ -95,12 +96,14 @@ export function Sidebar() {
                     name={main.name}
                     count={projectNodes.length}
                     onNewBranch={() => setNewBranchFor(projectId)}
+                    indent={!!group}
                   />
                   {projectNodes.map((n) => (
                     <NodeRow
                       key={n.id}
                       node={n}
                       nested
+                      indent={!!group}
                       active={n.id === activeNodeId}
                       onSelect={() => setActiveNode(n.id)}
                       sessions={sessions}
@@ -126,13 +129,14 @@ export function Sidebar() {
  * Selection happens on the branch rows, so there is never an ambiguous "is this
  * the project or its main branch?" target.
  */
-function ProjectLabel({ name, count, onNewBranch }: {
+function ProjectLabel({ name, count, onNewBranch, indent }: {
   name: string
   count: number
   onNewBranch: () => void
+  indent?: boolean
 }) {
   return (
-    <div className="group flex items-center gap-1.5 py-[3px] pl-3 pr-2 text-[12px] text-ink/80">
+    <div className={`group flex items-center gap-1.5 py-[3px] ${indent ? 'pl-[22px]' : 'pl-3'} pr-2 text-[12px] text-ink/80`}>
       <span className="truncate">{name}</span>
       <span className="shrink-0 rounded bg-panel-2 px-1 font-mono text-[9px] text-muted">{count}</span>
       <button
@@ -145,11 +149,12 @@ function ProjectLabel({ name, count, onNewBranch }: {
 }
 
 function NodeRow({
-  node, active, nested, onSelect, onNewBranch, sessions, runners,
+  node, active, nested, indent, onSelect, onNewBranch, sessions, runners,
 }: {
   node: Node
   active: boolean
   nested?: boolean
+  indent?: boolean
   onSelect: () => void
   onNewBranch?: () => void
   sessions: { nodeId: string; unread: boolean; alive: boolean }[]
@@ -164,7 +169,11 @@ function NodeRow({
       title={nested ? `${node.branch ?? node.label}\n${node.cwd}` : node.cwd}
       className={[
         'group relative flex cursor-default items-center gap-1.5 py-[3px] pr-2 text-[12px]',
-        nested ? 'pl-7' : 'pl-3',
+        // The 10px group indent is padding on the row itself, not a wrapper, so
+        // the hover/active background still spans the full sidebar width.
+        nested
+          ? (indent ? 'pl-[38px]' : 'pl-7')
+          : (indent ? 'pl-[22px]' : 'pl-3'),
         active
           ? 'bg-accent/12 text-ink'
           : 'text-ink/80 hover:bg-panel-2 hover:text-ink',
