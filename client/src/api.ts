@@ -43,7 +43,8 @@ export const api = {
   diff: (id: string, file: string, staged = false) =>
     json<{ diff: string }>(`/api/nodes/${id}/diff?file=${encodeURIComponent(file)}&staged=${staged ? 1 : 0}`),
 
-  prs: (id: string) => json<{ available: boolean; prs: PullRequest[]; error?: string | null }>(`/api/nodes/${id}/prs`),
+  prs: (id: string) =>
+    json<{ available: boolean; prs: PullRequest[]; viewer?: string | null; error?: string | null }>(`/api/nodes/${id}/prs`),
   createPr: (id: string, body: { title: string; body?: string; base?: string; draft?: boolean }) =>
     post<{ ok: boolean; url?: string; error?: string }>(`/api/nodes/${id}/prs`, body),
 

@@ -1,6 +1,15 @@
 import { run } from './exec.js'
 
 let ghAvailable = null
+let viewerLogin
+
+/** The logged-in GitHub user, cached for the process lifetime ('' if unknown). */
+export async function viewer() {
+  if (viewerLogin !== undefined) return viewerLogin
+  const result = await run('gh', ['api', 'user', '--jq', '.login'], { timeout: 15_000 })
+  viewerLogin = result.failed ? '' : result.stdout.trim()
+  return viewerLogin
+}
 
 export async function detectGh() {
   if (ghAvailable !== null) return ghAvailable
@@ -18,11 +27,12 @@ const jsonOr = (result, fallback) => {
 export async function pullRequests(cwd) {
   if (!(await detectGh())) return { available: false, prs: [] }
   const fields = 'number,title,author,headRefName,baseRefName,isDraft,updatedAt,url,state,reviewDecision,statusCheckRollup'
-  const result = await run('gh', ['pr', 'list', '--limit', '30', '--json', fields], {
-    cwd, timeout: 25_000,
-  })
+  const [result, login] = await Promise.all([
+    run('gh', ['pr', 'list', '--limit', '30', '--json', fields], { cwd, timeout: 25_000 }),
+    viewer(),
+  ])
   const prs = jsonOr(result, []).map(normalisePr)
-  return { available: true, prs, error: result.failed ? result.stderr.trim() : null }
+  return { available: true, prs, viewer: login || null, error: result.failed ? result.stderr.trim() : null }
 }
 
 export async function currentPr(cwd) {

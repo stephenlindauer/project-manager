@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 import type { Node, PullRequest } from '../types'
 
@@ -7,13 +7,23 @@ const CHECK_STYLE: Record<string, string> = {
 }
 
 export function PrsTab({ node }: { node: Node }) {
-  const [state, setState] = useState<{ available: boolean; prs: PullRequest[]; error?: string | null } | null>(null)
+  const [state, setState] = useState<
+    { available: boolean; prs: PullRequest[]; viewer?: string | null; error?: string | null } | null
+  >(null)
   const [creating, setCreating] = useState(false)
+  const [mineOnly, setMineOnly] = useState(true)
   const [title, setTitle] = useState('')
   const [result, setResult] = useState<string | null>(null)
 
   const reload = () => api.prs(node.id).then(setState).catch(() => setState(null))
   useEffect(() => { setState(null); setResult(null); reload() }, [node.id])
+
+  const viewer = state?.viewer ?? null
+  const mine = useMemo(
+    () => (viewer ? (state?.prs ?? []).filter((pr) => pr.author === viewer) : (state?.prs ?? [])),
+    [state?.prs, viewer],
+  )
+  const shown = mineOnly && viewer ? mine : state?.prs ?? []
 
   const create = async () => {
     if (!title.trim()) return
@@ -42,16 +52,31 @@ export function PrsTab({ node }: { node: Node }) {
           <h2 className="text-[11px] font-semibold uppercase tracking-wider text-muted">
             Open pull requests
           </h2>
+          {viewer && (
+            <div className="ml-auto flex overflow-hidden rounded border border-line text-[11px]">
+              {([true, false] as const).map((v) => (
+                <button
+                  key={String(v)}
+                  onClick={() => setMineOnly(v)}
+                  className={`px-2 py-0.5 ${
+                    mineOnly === v ? 'bg-panel-2 text-ink' : 'text-muted hover:text-ink'
+                  }`}
+                >
+                  {v ? `Mine ${mine.length}` : `All ${state.prs.length}`}
+                </button>
+              ))}
+            </div>
+          )}
           <button
             onClick={reload}
-            className="ml-auto rounded border border-line px-2 py-0.5 text-[11px] text-muted hover:border-accent hover:text-ink"
+            className={`rounded border border-line px-2 py-0.5 text-[11px] text-muted hover:border-accent hover:text-ink ${viewer ? '' : 'ml-auto'}`}
           >↻</button>
         </header>
 
         {state.error && <div className="rounded border border-bad/40 bg-bad/10 p-3 text-bad">{state.error}</div>}
 
         <div className="space-y-1.5">
-          {state.prs.map((pr) => (
+          {shown.map((pr) => (
             <a
               key={pr.number}
               href={pr.url}
@@ -77,7 +102,13 @@ export function PrsTab({ node }: { node: Node }) {
               </div>
             </a>
           ))}
-          {state.prs.length === 0 && <div className="text-muted">No open pull requests.</div>}
+          {shown.length === 0 && (
+            <div className="text-muted">
+              {mineOnly && viewer && state.prs.length > 0
+                ? `No open pull requests by you — ${state.prs.length} by others.`
+                : 'No open pull requests.'}
+            </div>
+          )}
         </div>
 
         {node.branch && (
