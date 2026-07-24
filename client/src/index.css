@@ -1,0 +1,94 @@
+@import 'tailwindcss';
+@import '@xterm/xterm/css/xterm.css';
+
+/**
+ * Retro-neon on near-black. The base is deliberately desaturated — blacks and
+ * greys carry the layout — so the neon accents only ever appear on things that
+ * mean something: selection, git state, branches, and running processes.
+ */
+@theme {
+  /* Base: near-black through dark grey */
+  --color-bg: #08080a;
+  --color-panel: #0e0e12;
+  --color-panel-2: #17171e;
+  --color-line: #24242e;
+  --color-line-bright: #33333f;
+
+  /* Text */
+  --color-ink: #e9e9f2;
+  --color-muted: #8b8b9e;
+
+  /* Neon accents */
+  --color-accent: #00e5ff; /* cyan — selection, links, primary */
+  --color-neon-pink: #ff2d8f; /* branches and worktrees */
+  --color-neon-purple: #b06cff;
+  --color-ok: #2fffa4; /* acid green — passing, running, ahead */
+  --color-warn: #ffc247; /* amber — dirty working tree */
+  --color-bad: #ff3d64; /* hot red — failing, conflicts */
+
+  --shadow-neon: 0 0 8px color-mix(in srgb, var(--color-accent) 55%, transparent);
+  --shadow-neon-pink: 0 0 8px color-mix(in srgb, var(--color-neon-pink) 55%, transparent);
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: ui-sans-serif, -apple-system, 'SF Pro Text', system-ui, sans-serif;
+  font-size: 13px;
+  overflow: hidden;
+}
+
+/* A faint scanline wash over the whole app — reads as CRT without costing legibility. */
+#root::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0 2px,
+    rgba(0, 0, 0, 0.16) 2px 3px
+  );
+  opacity: 0.35;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #root::before { display: none; }
+}
+
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--color-line);
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--color-line-bright); }
+
+::selection {
+  background: color-mix(in srgb, var(--color-accent) 35%, transparent);
+  color: var(--color-ink);
+}
+
+input:focus, button:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+/* Neon helpers — used sparingly, only on active/live state. */
+@utility glow {
+  box-shadow: var(--shadow-neon);
+}
+@utility glow-text {
+  text-shadow: 0 0 10px color-mix(in srgb, currentColor 70%, transparent);
+}
+@utility glow-pink {
+  box-shadow: var(--shadow-neon-pink);
+}
+
+.xterm .xterm-viewport { background-color: transparent !important; }
