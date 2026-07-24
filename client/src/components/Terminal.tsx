@@ -34,6 +34,10 @@ const XTERM_THEME = {
 const MIN_COLS = 40
 const MIN_ROWS = 10
 
+/** Reconnect backoff: first retry is quick (server restarts are ~1-2s), capped. */
+const RECONNECT_BASE_MS = 400
+const RECONNECT_MAX_MS = 8000
+
 /**
  * An xterm view bound to a server-side session over `/pty`.
  *
@@ -97,38 +101,76 @@ export function Terminal({
       return term.cols >= MIN_COLS && term.rows >= MIN_ROWS
     }
 
-    const sized = fitIfMeasurable()
-    const params = new URLSearchParams({ node: nodeId, kind })
-    // Only claim a size we actually measured; otherwise let the server keep its
-    // default until the first real resize arrives.
-    if (sized) {
-      params.set('cols', String(term.cols))
-      params.set('rows', String(term.rows))
-    }
-    if (task) params.set('task', task)
-
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-    const ws = new WebSocket(`${proto}://${location.host}/pty?${params}`)
-    wsRef.current = ws
+    // The xterm instance lives for the whole effect; only the socket reconnects,
+    // so a dropped connection never wipes the screen. `onData`/`sendResize` read
+    // the *current* socket through the ref rather than closing over one instance.
+    let disposed = false
+    let retry = 0
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+    let noticeShown = false // the "[disconnected]" line, written at most once per gap
 
     const sendResize = () => {
-      if (ws.readyState !== WebSocket.OPEN) return
+      const ws = wsRef.current
+      if (!ws || ws.readyState !== WebSocket.OPEN) return
       if (term.cols < MIN_COLS || term.rows < MIN_ROWS) return
       ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
     }
 
-    ws.onopen = () => { fitIfMeasurable(); sendResize() }
-    ws.onmessage = (ev) => {
-      const msg = JSON.parse(ev.data)
-      if (msg.type === 'data' || msg.type === 'replay') term.write(msg.data)
-      else if (msg.type === 'exit') term.writeln('\r\n\x1b[90m[session ended]\x1b[0m')
-      else if (msg.type === 'error') term.writeln(`\r\n\x1b[31m${msg.message}\x1b[0m`)
-    }
-    ws.onclose = () => term.writeln('\r\n\x1b[90m[disconnected]\x1b[0m')
+    const connect = () => {
+      if (disposed) return
+      const sized = fitIfMeasurable()
+      const params = new URLSearchParams({ node: nodeId, kind })
+      // Only claim a size we actually measured; otherwise let the server keep its
+      // default until the first real resize arrives.
+      if (sized) {
+        params.set('cols', String(term.cols))
+        params.set('rows', String(term.rows))
+      }
+      if (task) params.set('task', task)
 
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+      const ws = new WebSocket(`${proto}://${location.host}/pty?${params}`)
+      wsRef.current = ws
+
+      ws.onopen = () => {
+        retry = 0
+        if (noticeShown) {
+          term.writeln('\r\n\x1b[92m[reconnected]\x1b[0m')
+          noticeShown = false
+        }
+        fitIfMeasurable()
+        sendResize()
+      }
+      ws.onmessage = (ev) => {
+        const msg = JSON.parse(ev.data)
+        // `replay` is the raw-pty fallback's full scrollback. On a reconnect the
+        // screen already holds that content, so reset before writing it back to
+        // avoid duplication. tmux never sends replay — it repaints on attach.
+        if (msg.type === 'replay') { term.reset(); term.write(msg.data) }
+        else if (msg.type === 'data') term.write(msg.data)
+        else if (msg.type === 'exit') term.writeln('\r\n\x1b[90m[session ended]\x1b[0m')
+        else if (msg.type === 'error') term.writeln(`\r\n\x1b[31m${msg.message}\x1b[0m`)
+      }
+      ws.onclose = () => {
+        wsRef.current = null
+        if (disposed) return
+        if (!noticeShown) {
+          term.writeln('\r\n\x1b[90m[disconnected — reconnecting…]\x1b[0m')
+          noticeShown = true
+        }
+        const delay = Math.min(RECONNECT_BASE_MS * 2 ** retry, RECONNECT_MAX_MS)
+        retry++
+        reconnectTimer = setTimeout(connect, delay + Math.random() * 250)
+      }
+      // onerror is always followed by onclose, which owns the reconnect.
+      ws.onerror = () => {}
+    }
+
+    // Registered once on the persistent term; reads whichever socket is current.
     if (!task) {
       term.onData((d) => {
-        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: d }))
+        const ws = wsRef.current
+        if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: d }))
       })
     }
 
@@ -137,9 +179,13 @@ export function Terminal({
     })
     ro.observe(host)
 
+    connect()
+
     return () => {
+      disposed = true
+      if (reconnectTimer) clearTimeout(reconnectTimer)
       ro.disconnect()
-      ws.close()
+      wsRef.current?.close()
       term.dispose()
       termRef.current = null
       wsRef.current = null
