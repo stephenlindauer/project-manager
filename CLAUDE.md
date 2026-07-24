@@ -126,6 +126,15 @@ any session.
 
 ## Deployment & auth
 
+This machine runs the app as a launchd **LaunchAgent** (`local.projectmanager`),
+not from a terminal. It serves the built `dist/`, so a client-only change is not
+live until `npm run deploy:macos` (build + restart) runs — a source edit alone
+does nothing. Control it with `scripts/macos/service.sh`
+(`install|uninstall|start|stop|restart|status|logs`); per-OS scripts live under
+`scripts/<os>/`. Restarting the service detaches terminal viewers but leaves tmux
+sessions alive. Note the port will already be held by the agent, so a manual
+`npm run start` fails with EADDRINUSE — that is the service, not a bug.
+
 Optional, all off by default (loopback / http / no login), configured via env vars
 or `pm.config.json` (see `server/config.js`). Setup scripts: `npm run generate-cert`
 and `npm run create-user`.

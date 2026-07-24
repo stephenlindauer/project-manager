@@ -75,6 +75,41 @@ The same settings can live in a **`pm.config.json`** at the repo root instead of
 vars (env vars win). Copy `pm.config.example.json` to start. That file, the auth
 file, and `certs/` are gitignored.
 
+## Running as a service (macOS)
+
+`npm run start` serves the prebuilt `dist/`, so it has to be rebuilt after any
+client change. To run it in the background instead of a terminal tab:
+
+```bash
+npm run build
+npm run service:macos -- install     # → ~/Library/LaunchAgents/local.projectmanager.plist
+```
+
+It starts at login and restarts on crash. Day to day you only need:
+
+```bash
+npm run deploy:macos                 # build + restart (the usual one)
+npm run service:macos -- status      # state, pid, url
+npm run service:macos -- logs        # tail stdout + stderr
+npm run service:macos -- restart|stop|start|uninstall
+```
+
+Notes:
+
+- It's a **LaunchAgent**, not a daemon: it runs as you, in your login session,
+  which is what terminals and tmux need.
+- The agent's `PATH` is captured from the shell that ran `install` — the app
+  resolves `git`, `gh`, `tmux` and `claude` by name, and launchd would otherwise
+  start with a nearly empty `PATH`. Re-run `install` if that changes.
+- Node's absolute path is baked into the plist, so **re-run `install` after an
+  nvm version bump**; `restart` detects the dangling path and says so.
+- Stopping or restarting the service does not touch tmux sessions — they
+  reattach when it comes back.
+- Logs: `~/Library/Logs/ProjectManager/server.{out,err}.log`.
+
+The Linux equivalent (a `systemd --user` unit) belongs in `scripts/linux/`;
+`scripts/macos/service.sh` is the shape to mirror.
+
 ## Remote access & authentication
 
 By default the app binds to loopback only and has no login — fine for local use.

@@ -10,6 +10,8 @@
     "dev:web": "vite",
     "build": "vite build",
     "start": "NODE_ENV=production node server/index.js",
+    "service:macos": "bash scripts/macos/service.sh",
+    "deploy:macos": "bash scripts/macos/deploy.sh",
     "create-user": "node scripts/create-user.js",
     "generate-cert": "node scripts/generate-cert.js"
   },
