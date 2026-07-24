@@ -361,3 +361,16 @@ server.listen(config.port, '127.0.0.1', async () => {
 // Keep git state fresh in the background so sidebar badges don't go stale.
 setInterval(() => store.refreshAll().catch(() => {}), 20_000)
 setInterval(() => store.rescan().catch(() => {}), 5 * 60_000)
+
+// Detach (but never kill) tmux clients on the way out, so a restart under
+// `node --watch` does not leave orphaned attach processes stacked on a session.
+// The tmux sessions themselves — and any work inside them — survive.
+let shuttingDown = false
+for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
+  process.on(sig, () => {
+    if (shuttingDown) return
+    shuttingDown = true
+    T.detachAll()
+    process.exit(0)
+  })
+}

@@ -110,7 +110,13 @@ class Session extends EventEmitter {
     try {
       if (tmuxAvailable) {
         const name = await this.ensureTmuxSession()
-        this.proc = pty.spawn('tmux', ['-u', 'attach-session', '-t', name], opts)
+        // `-d` detaches every other client as we attach. Exactly one client per
+        // session is essential: tmux sizes a window to its SMALLEST attached
+        // client, so a second (or orphaned) client at a different size clamps
+        // the window and the mismatched columns thrash on redraw — the "garbled
+        // scrolling" and doubled-echo symptoms. It also reaps attach processes
+        // orphaned by a previous server instance (node --watch restarts).
+        this.proc = pty.spawn('tmux', ['-u', 'attach-session', '-d', '-t', name], opts)
       } else {
         const args = this.kind === 'claude' ? ['-lic', config.claudeCommand] : ['-l']
         this.proc = pty.spawn(SHELL, args, opts)
@@ -189,6 +195,19 @@ export function getSession(nodeId, kind, cwd) {
   }
   s.cwd = cwd || s.cwd
   return s
+}
+
+/**
+ * Kill this server's attach processes without destroying the tmux sessions
+ * behind them. Called on exit so a `node --watch` restart doesn't leave orphaned
+ * `tmux attach-session` clients hanging off the sessions.
+ */
+export function detachAll() {
+  for (const s of sessions.values()) {
+    try { s.proc?.kill() } catch { /* already gone */ }
+    s.proc = null
+    s.clients = 0
+  }
 }
 
 export function sessionSummaries() {
