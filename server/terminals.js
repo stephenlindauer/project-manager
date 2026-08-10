@@ -91,6 +91,18 @@ class Session extends EventEmitter {
       run('tmux', ['set-option', '-t', name, 'mouse', 'on']),
       run('tmux', ['set-option', '-t', name, 'history-limit', '50000']),
       run('tmux', ['set-window-option', '-t', name, 'aggressive-resize', 'on']),
+      // Makes a mouse selection reachable from the browser. With `mouse on`,
+      // tmux owns the drag and paints its own highlight, so xterm never creates
+      // a browser selection — the text goes to tmux's paste buffer, which the
+      // browser cannot read. `set-clipboard on` (the default is `external`,
+      // which only forwards what *applications* send) makes tmux emit its own
+      // copies as OSC 52, and Terminal.tsx writes those to the system clipboard.
+      //
+      // `-s`: set-clipboard is a server option with no session scope, so unlike
+      // the options above this applies to every session on the tmux server,
+      // including ones attached from a real terminal. OSC 52 is what those
+      // terminals already expect, so the effect there is the same feature.
+      run('tmux', ['set-option', '-s', 'set-clipboard', 'on']),
     ])
     return name
   }

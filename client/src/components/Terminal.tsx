@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
+import { decodeOsc52, writeClipboard } from '../lib/clipboard'
 
 /** Retro-neon ANSI palette, matched to the app's accent colours in index.css. */
 const XTERM_THEME = {
@@ -94,6 +95,32 @@ export function Terminal({
       return true
     })
 
+    /*
+      Copy-on-select, over two paths, because tmux and xterm each own the mouse
+      in different situations.
+
+      1. tmux (the usual one): `mouse on` means tmux receives the drag and paints
+         its own highlight, so xterm never makes a browser selection — the text
+         lands in tmux's paste buffer, out of the browser's reach. With
+         `set-clipboard on` (set in terminals.js) tmux also emits the copy as an
+         OSC 52 escape, which is what this handler turns into a clipboard write.
+      2. xterm's own selection: shift-drag forces a local selection past tmux's
+         mouse tracking, and the raw-pty fallback has no mouse tracking at all.
+         Copy on mouseup rather than on every selection-change event, so a drag
+         is one clipboard write and it happens inside the user gesture.
+    */
+    const oscHandler = term.parser.registerOscHandler(52, (payload) => {
+      const text = decodeOsc52(payload)
+      if (text) void writeClipboard(text)
+      return true // handled either way; never answer a read request
+    })
+
+    const copySelection = () => {
+      const sel = term.getSelection()
+      if (sel) void writeClipboard(sel)
+    }
+    host.addEventListener('mouseup', copySelection)
+
     /** Fit only when the pane is laid out and the result is a plausible size. */
     const fitIfMeasurable = () => {
       if (!host.offsetParent || host.clientWidth < 1 || host.clientHeight < 1) return false
@@ -184,6 +211,8 @@ export function Terminal({
     return () => {
       disposed = true
       if (reconnectTimer) clearTimeout(reconnectTimer)
+      host.removeEventListener('mouseup', copySelection)
+      oscHandler.dispose()
       ro.disconnect()
       wsRef.current?.close()
       term.dispose()
