@@ -92,6 +92,8 @@ export function Terminal({
     term.attachCustomKeyEventHandler((e) => {
       if (e.altKey && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) return false
       if ((e.metaKey || e.ctrlKey) && e.code === 'KeyK') return false
+      // ⌘B toggles the nav. ⌃B is left alone — it is tmux's prefix.
+      if (e.metaKey && !e.ctrlKey && e.code === 'KeyB') return false
       return true
     })
 

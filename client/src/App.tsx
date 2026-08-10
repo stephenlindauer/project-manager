@@ -23,7 +23,9 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-full">
+    // overflow-hidden: the collapsed nav parks itself off-screen to the left,
+    // which would otherwise be scrollable overflow.
+    <div className="flex h-full overflow-hidden">
       <Sidebar />
       {node ? (
         <MainPanel key={node.id} node={node} />
@@ -39,7 +41,8 @@ export default function App() {
 }
 
 /**
- * ⌥↑/⌥↓ switches project, ⌥←/⌥→ switches tab, ⌘K opens the palette.
+ * ⌥↑/⌥↓ switches project, ⌥←/⌥→ switches tab, ⌘K opens the palette,
+ * ⌘B collapses the nav.
  *
  * Bound in the capture phase on `window` so it wins over xterm, which otherwise
  * swallows the keystroke and sends an escape sequence to the shell. Matching on
@@ -50,12 +53,21 @@ function useGlobalShortcuts() {
   const moveNode = useStore((s) => s.moveNode)
   const moveTab = useStore((s) => s.moveTab)
   const setPalette = useStore((s) => s.setPalette)
+  const toggleNav = useStore((s) => s.toggleNav)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.code === 'KeyK') {
         e.preventDefault()
         setPalette(!useStore.getState().paletteOpen)
+        return
+      }
+      // ⌘ only, never ⌃B: Ctrl-B is tmux's prefix key, and every terminal in
+      // this app is a tmux client. Binding it here would make the prefix
+      // unreachable from the browser.
+      if (e.metaKey && !e.ctrlKey && !e.altKey && e.code === 'KeyB') {
+        e.preventDefault()
+        toggleNav()
         return
       }
       if (!e.altKey || e.metaKey || e.ctrlKey) return
@@ -70,5 +82,5 @@ function useGlobalShortcuts() {
     }
     window.addEventListener('keydown', onKey, { capture: true })
     return () => window.removeEventListener('keydown', onKey, { capture: true })
-  }, [moveNode, moveTab, setPalette])
+  }, [moveNode, moveTab, setPalette, toggleNav])
 }

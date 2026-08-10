@@ -21,6 +21,10 @@ type State = {
   /** Remembers the last tab per node so switching projects feels like tabs in an editor. */
   tabByNode: Record<string, TabId>
   paletteOpen: boolean
+  /** Sidebar collapsed to its rail. Persisted; hover and ⌥↑↓ peek over it. */
+  navCollapsed: boolean
+  /** A timed peek from keyboard navigation. Hover peeking is local to Sidebar. */
+  navPeek: boolean
   newBranchFor: string | null
   loading: boolean
   /** null = auth state unknown; true = login screen required; false = past the gate. */
@@ -36,6 +40,8 @@ type State = {
   moveNode: (delta: number) => void
   moveTab: (delta: number) => void
   setPalette: (open: boolean) => void
+  toggleNav: () => void
+  peekNav: () => void
   setNewBranchFor: (projectId: string | null) => void
 }
 
@@ -97,6 +103,8 @@ export const useStore = create<State>((set, get) => ({
   activeTab: 'summary',
   tabByNode: {},
   paletteOpen: false,
+  navCollapsed: localStorage.getItem('pm:navCollapsed') === '1',
+  navPeek: false,
   newBranchFor: null,
   loading: true,
   needsLogin: null,
@@ -155,6 +163,8 @@ export const useStore = create<State>((set, get) => ({
     const i = nodes.findIndex((n) => n.id === activeNodeId)
     const next = nodes[(i + delta + nodes.length) % nodes.length]
     if (next) get().setActiveNode(next.id)
+    // Keyboard navigation is useless against a collapsed nav you can't see.
+    get().peekNav()
   },
 
   moveTab: (delta) => {
@@ -163,8 +173,29 @@ export const useStore = create<State>((set, get) => ({
   },
 
   setPalette: (paletteOpen) => set({ paletteOpen }),
+
+  toggleNav: () => {
+    const navCollapsed = !get().navCollapsed
+    localStorage.setItem('pm:navCollapsed', navCollapsed ? '1' : '0')
+    // Drop any in-flight peek, so expanding doesn't leave a timer that later
+    // "un-peeks" and looks like a flicker.
+    if (peekTimer) clearTimeout(peekTimer)
+    set({ navCollapsed, navPeek: false })
+  },
+
+  peekNav: () => {
+    if (!get().navCollapsed) return
+    if (peekTimer) clearTimeout(peekTimer)
+    peekTimer = setTimeout(() => useStore.setState({ navPeek: false }), PEEK_MS)
+    set({ navPeek: true })
+  },
+
   setNewBranchFor: (newBranchFor) => set({ newBranchFor }),
 }))
+
+/** How long a keyboard-triggered peek stays open after the last keystroke. */
+const PEEK_MS = 1600
+let peekTimer: ReturnType<typeof setTimeout> | null = null
 
 /**
  * Live updates from the server. Node-level git refreshes are merged in place so

@@ -32,8 +32,14 @@ The right panel has six tabs for the selected project:
 | `⌥↑` / `⌥↓` | Previous / next project (walks worktrees too) |
 | `⌥←` / `⌥→` | Previous / next tab |
 | `⌘K` | Fuzzy jump to any project or branch |
+| `⌘B` | Collapse / restore the project nav |
 
 Shortcuts are bound in the capture phase so they work while a terminal has focus.
+`⌃B` is deliberately *not* bound — it is tmux's prefix key.
+
+Collapsed, the nav leaves a 12px rail: hover it to peek, click it to re-pin.
+`⌥↑↓` also peeks while you navigate and retracts on its own. A peek is an overlay,
+so it never resizes the terminal underneath.
 
 ## Terminals
 

@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { sectionOf, useStore } from '../store'
 import { shortAgo } from '../lib/time'
 import type { Node } from '../types'
@@ -31,6 +31,22 @@ function useTree(): Section[] {
   }, [nodes])
 }
 
+/** Width of the rail left behind when the nav is collapsed. */
+const RAIL = 'w-3'
+
+/**
+ * The project nav, in two states.
+ *
+ * Expanded, it is an ordinary flex child. Collapsed, the flow slot shrinks to a
+ * 12px rail and the panel itself becomes an absolutely-positioned overlay that
+ * slides off to the left — same element, same classes, same 266px box at the
+ * same origin, so a peek renders 1:1 with the docked panel.
+ *
+ * That overlay is the whole point: hovering the rail or navigating with ⌥↑↓
+ * must not reflow the main panel. A reflow would resize the terminal pane, and
+ * every resize of a tmux-backed pane forces a full repaint of whatever TUI is
+ * running in it. Collapsing itself does resize once — that part is deliberate.
+ */
 export function Sidebar() {
   const tree = useTree()
   const activeNodeId = useStore((s) => s.activeNodeId)
@@ -40,9 +56,36 @@ export function Sidebar() {
   const rescan = useStore((s) => s.rescan)
   const sessions = useStore((s) => s.sessions)
   const runners = useStore((s) => s.runners)
+  const collapsed = useStore((s) => s.navCollapsed)
+  const peek = useStore((s) => s.navPeek)
+  const toggleNav = useStore((s) => s.toggleNav)
+
+  // Hover is deliberately local: it must not race the store's peek timer, and
+  // it should survive the mouse moving from the rail onto the overlay (the
+  // overlay is a child of this wrapper, so no mouseleave fires in between).
+  const [hovered, setHovered] = useState(false)
+  const shown = !collapsed || hovered || peek
 
   return (
-    <aside className="flex h-full w-[266px] shrink-0 flex-col border-r border-line bg-panel">
+    <div
+      className={`relative z-30 h-full shrink-0 ${collapsed ? RAIL : 'w-[266px]'}`}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      {collapsed && <Rail onExpand={toggleNav} active={shown} />}
+
+      <aside
+        className={[
+          'flex h-full w-[266px] flex-col border-r border-line bg-panel',
+          // Only the positioning changes between states; the box does not.
+          collapsed ? 'absolute left-0 top-0 z-30 transition-transform duration-150' : 'shrink-0',
+          collapsed && !shown ? '-translate-x-full' : 'translate-x-0',
+          collapsed && shown ? 'shadow-[6px_0_24px_rgba(0,0,0,0.55)]' : '',
+        ].join(' ')}
+        // Off-screen, it must not swallow clicks meant for the main panel.
+        aria-hidden={collapsed && !shown}
+        inert={collapsed && !shown ? true : undefined}
+      >
       <header className="flex items-center gap-2 border-b border-line px-3 py-2.5">
         <span className="text-[12px] font-semibold uppercase tracking-[0.16em] text-accent glow-text">
           Projects
@@ -57,6 +100,11 @@ export function Sidebar() {
           className="rounded border border-line px-1.5 py-0.5 text-[10px] text-muted hover:border-accent hover:text-ink"
           title="Rescan ~/Projects"
         >↻</button>
+        <button
+          onClick={toggleNav}
+          className="rounded border border-line px-1.5 py-0.5 text-[10px] text-muted hover:border-accent hover:text-ink"
+          title={collapsed ? 'Pin sidebar open (⌘B)' : 'Collapse sidebar (⌘B)'}
+        >{collapsed ? '»' : '«'}</button>
       </header>
 
       <nav className="flex-1 overflow-y-auto py-1">
@@ -119,8 +167,31 @@ export function Sidebar() {
 
       <footer className="border-t border-line px-3 py-1.5 text-[10px] text-muted">
         <kbd className="text-accent">⌥↑↓</kbd> project · <kbd className="text-accent">⌥←→</kbd> tab
+        · <kbd className="text-accent">⌘B</kbd> nav
       </footer>
-    </aside>
+      </aside>
+    </div>
+  )
+}
+
+/**
+ * The 12px strip left in the layout when the nav is collapsed — the hover
+ * target that brings the panel back, and a click target that re-pins it.
+ * Without it the only way back would be the keyboard.
+ */
+function Rail({ onExpand, active }: { onExpand: () => void; active: boolean }) {
+  return (
+    <button
+      onClick={onExpand}
+      title="Show projects (⌘B)"
+      className="group h-full w-full cursor-default border-r border-line bg-panel"
+    >
+      <span
+        className={`mx-auto block h-16 w-[2px] rounded-full transition-colors ${
+          active ? 'bg-accent shadow-neon' : 'bg-line group-hover:bg-accent/60'
+        }`}
+      />
+    </button>
   )
 }
 
@@ -163,8 +234,18 @@ function NodeRow({
   const unread = sessions.some((s) => s.nodeId === node.id && s.unread)
   const running = runners.some((r) => r.nodeId === node.id && r.running)
 
+  // ⌥↑↓ can walk the selection past the edge of the scroll area. That is merely
+  // annoying when the nav is docked, but breaks the collapsed case outright: the
+  // peek would slide open showing no highlight at all. `nearest` keeps it a
+  // minimal nudge instead of recentring the list on every keystroke.
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (active) ref.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [active])
+
   return (
     <div
+      ref={ref}
       onClick={onSelect}
       title={nested ? `${node.branch ?? node.label}\n${node.cwd}` : node.cwd}
       className={[

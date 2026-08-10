@@ -120,6 +120,11 @@ any session.
   `.worktrees`, which is where new worktrees are created.
 - Errors inside WebSocket handlers must not throw — an uncaught throw there takes
   down the whole server. Report into the terminal instead.
+- A collapsed sidebar peek (hover or `⌥↑↓`) must stay an **overlay**: the panel is
+  absolutely positioned so the main panel never reflows. Reflowing it resizes the
+  terminal pane, and resizing a tmux-backed pane repaints the whole TUI — a peek
+  that flickers the user's editor is worse than no peek. Only `⌘B` itself, the
+  deliberate toggle, is allowed to change the layout.
 - Colors come from the `@theme` block in `index.css`; each neon accent has an
   assigned meaning (cyan = selection, pink = branches, green = running/ahead,
   amber = dirty, red = failing). Check contrast before dimming small text.
