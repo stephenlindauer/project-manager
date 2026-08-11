@@ -128,6 +128,12 @@ any session.
 - Colors come from the `@theme` block in `index.css`; each neon accent has an
   assigned meaning (cyan = selection, pink = branches, green = running/ahead,
   amber = dirty, red = failing). Check contrast before dimming small text.
+- Night mode (toggle at the far right of the tab bar) redefines those same tokens
+  under `:root[data-night]` at ~70% brightness, so any new color must be a token
+  to follow it. Two exceptions need hand-editing: xterm's palette is set in JS
+  (`XTERM_THEME` / `XTERM_THEME_NIGHT` in `Terminal.tsx`, kept in step by hand),
+  and the `data-night` attribute is set at module load in `store.ts` rather than
+  from an effect — from an effect the first paint would flash at full brightness.
 
 ## Deployment & auth
 

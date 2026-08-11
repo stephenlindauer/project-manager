@@ -20,6 +20,8 @@ export function MainPanel({ node }: { node: Node }) {
   const sessions = useStore((s) => s.sessions)
   const setNewBranchFor = useStore((s) => s.setNewBranchFor)
   const rescan = useStore((s) => s.rescan)
+  const night = useStore((s) => s.night)
+  const toggleNight = useStore((s) => s.toggleNight)
 
   // Bumping a kind's epoch changes the Terminal's key, forcing a full remount:
   // the old socket is torn down and a fresh one connects. MainPanel is keyed by
@@ -117,6 +119,16 @@ export function MainPanel({ node }: { node: Node }) {
               title="Remove this worktree"
             >remove</button>
           )}
+          {/* Last in the row so it stays pinned to the corner whatever else the
+              tab or worktree adds to this cluster. */}
+          <button
+            onClick={toggleNight}
+            aria-pressed={night}
+            className={`rounded border px-1.5 py-0.5 ${
+              night ? 'border-accent text-accent' : 'border-line hover:border-accent hover:text-ink'
+            }`}
+            title={night ? 'Night mode on — restore full brightness' : 'Night mode — dim the whole palette'}
+          >{night ? '☾' : '☀'}</button>
         </div>
       </header>
 

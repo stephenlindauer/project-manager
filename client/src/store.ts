@@ -21,6 +21,8 @@ type State = {
   /** Remembers the last tab per node so switching projects feels like tabs in an editor. */
   tabByNode: Record<string, TabId>
   paletteOpen: boolean
+  /** Dimmed palette for reading in a dark room. Persisted; see `applyNight`. */
+  night: boolean
   /** Sidebar collapsed to its rail. Persisted; hover and ⌥↑↓ peek over it. */
   navCollapsed: boolean
   /** A timed peek from keyboard navigation. Hover peeking is local to Sidebar. */
@@ -40,6 +42,7 @@ type State = {
   moveNode: (delta: number) => void
   moveTab: (delta: number) => void
   setPalette: (open: boolean) => void
+  toggleNight: () => void
   toggleNav: () => void
   peekNav: () => void
   setNewBranchFor: (projectId: string | null) => void
@@ -94,6 +97,18 @@ export function visibleNodes(nodes: Node[]): Node[] {
   })
 }
 
+/**
+ * Night mode is a `data-night` attribute on <html>; index.css redefines the
+ * colour tokens under it. Applied at module load rather than from an effect so
+ * the first paint is already dimmed — a full-brightness flash is exactly what
+ * the mode exists to avoid.
+ */
+const nightAtBoot = localStorage.getItem('pm:night') === '1'
+function applyNight(on: boolean) {
+  document.documentElement.toggleAttribute('data-night', on)
+}
+applyNight(nightAtBoot)
+
 export const useStore = create<State>((set, get) => ({
   projects: [],
   nodes: [],
@@ -103,6 +118,7 @@ export const useStore = create<State>((set, get) => ({
   activeTab: 'summary',
   tabByNode: {},
   paletteOpen: false,
+  night: nightAtBoot,
   navCollapsed: localStorage.getItem('pm:navCollapsed') === '1',
   navPeek: false,
   newBranchFor: null,
@@ -173,6 +189,13 @@ export const useStore = create<State>((set, get) => ({
   },
 
   setPalette: (paletteOpen) => set({ paletteOpen }),
+
+  toggleNight: () => {
+    const night = !get().night
+    localStorage.setItem('pm:night', night ? '1' : '0')
+    applyNight(night)
+    set({ night })
+  },
 
   toggleNav: () => {
     const navCollapsed = !get().navCollapsed

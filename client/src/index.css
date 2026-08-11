@@ -30,6 +30,37 @@
   --shadow-neon-pink: 0 0 8px color-mix(in srgb, var(--color-neon-pink) 55%, transparent);
 }
 
+/**
+ * Night mode — same hues, roughly 70% of the brightness, so the palette keeps
+ * every accent's meaning while the whites stop glaring in a dark room. Tailwind
+ * v4 utilities compile to `var(--color-…)`, so redefining the tokens here
+ * re-colours the whole app; `:root[data-night]` outranks the `@theme` block on
+ * bare `:root`. The attribute is set on <html> by the store, before first paint.
+ */
+:root[data-night] {
+  --color-bg: #050506;
+  --color-panel: #0a0a0d;
+  --color-panel-2: #101015;
+  --color-line: #1b1b23;
+  --color-line-bright: #26262f;
+
+  /* The whites take the deepest cut — they cover the most screen area. */
+  --color-ink: #a6a6b3;
+  --color-muted: #64646f;
+
+  --color-accent: #00a0b3;
+  --color-neon-pink: #b21f64;
+  --color-neon-purple: #7b4bb3;
+  --color-ok: #21b273;
+  --color-warn: #b28832;
+  --color-bad: #b22b46;
+
+  /* Glows are pure added light; halve them on top of the dimmer accents. */
+  --glow-text-strength: 35%;
+  --shadow-neon: 0 0 8px color-mix(in srgb, var(--color-accent) 30%, transparent);
+  --shadow-neon-pink: 0 0 8px color-mix(in srgb, var(--color-neon-pink) 30%, transparent);
+}
+
 html, body, #root {
   height: 100%;
   margin: 0;
@@ -85,7 +116,7 @@ input:focus, button:focus-visible {
   box-shadow: var(--shadow-neon);
 }
 @utility glow-text {
-  text-shadow: 0 0 10px color-mix(in srgb, currentColor 70%, transparent);
+  text-shadow: 0 0 10px color-mix(in srgb, currentColor var(--glow-text-strength, 70%), transparent);
 }
 @utility glow-pink {
   box-shadow: var(--shadow-neon-pink);

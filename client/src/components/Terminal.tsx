@@ -3,6 +3,7 @@ import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { decodeOsc52, writeClipboard } from '../lib/clipboard'
+import { useStore } from '../store'
 
 /** Retro-neon ANSI palette, matched to the app's accent colours in index.css. */
 const XTERM_THEME = {
@@ -30,6 +31,39 @@ const XTERM_THEME = {
   brightCyan: '#9df6ff',
   brightWhite: '#f4f4fb',
 }
+
+/**
+ * The same palette at ~70% brightness, for night mode. xterm's colours are set
+ * in JS, so they cannot ride on the CSS tokens in index.css the way the rest of
+ * the app does — this table has to be kept in step with the one above by hand.
+ */
+const XTERM_THEME_NIGHT = {
+  background: '#050506',
+  foreground: '#a6a6b3',
+  cursor: '#00a0b3',
+  cursorAccent: '#050506',
+  selectionBackground: 'rgba(0, 229, 255, 0.18)',
+
+  black: '#101015',
+  red: '#b22b46',
+  green: '#21b273',
+  yellow: '#b28832',
+  blue: '#00a0b3',
+  magenta: '#b21f64',
+  cyan: '#42a8b3',
+  white: '#8d8d97',
+
+  brightBlack: '#353540',
+  brightRed: '#b24b5f',
+  brightGreen: '#4db286',
+  brightYellow: '#b2965b',
+  brightBlue: '#4ba7b2',
+  brightMagenta: '#b24b7b',
+  brightCyan: '#6eacb3',
+  brightWhite: '#aaaab0',
+}
+
+const themeFor = (night: boolean) => (night ? XTERM_THEME_NIGHT : XTERM_THEME)
 
 /** A hidden element measures as zero; anything below this is not a real size. */
 const MIN_COLS = 40
@@ -63,6 +97,8 @@ export function Terminal({
   const fitRef = useRef<FitAddon | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
 
+  const night = useStore((s) => s.night)
+
   // Latches on the first time this pane is shown, and never goes back.
   const [activated, setActivated] = useState(!hidden)
   useEffect(() => { if (!hidden) setActivated(true) }, [hidden])
@@ -79,7 +115,7 @@ export function Terminal({
       cursorBlink: true,
       allowProposedApi: true,
       scrollback: 20_000,
-      theme: XTERM_THEME,
+      theme: themeFor(useStore.getState().night),
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
@@ -239,6 +275,12 @@ export function Terminal({
     })
     return () => cancelAnimationFrame(id)
   }, [hidden, activated])
+
+  // Recolour in place. Swapping `options.theme` only repaints the browser-side
+  // renderer — no resize reaches tmux, so a live TUI is not redrawn or reflowed.
+  useEffect(() => {
+    if (termRef.current) termRef.current.options.theme = themeFor(night)
+  }, [night, activated])
 
   return (
     <div
