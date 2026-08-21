@@ -54,6 +54,25 @@ tmux attach -t pm-claude-<id>
 If tmux is missing the server falls back to plain node-pty sessions, which survive
 reloads but not restarts. The active backend is reported at `/api/meta`.
 
+## Claude notifications
+
+Claude Code can tell the app when a session finishes a turn or gets stuck waiting
+on you. Register the hooks once:
+
+```bash
+npm run install-hooks            # writes ~/.claude/settings.json (backed up first)
+npm run install-hooks -- --remove
+```
+
+From then on, any `claude` session — started from the Claude tab or from a real
+terminal in a project directory — raises a pulsing orange marker on that
+project's row, slides a toast into the top right, and plays a system sound. The
+toast jumps you to that session when clicked; the row marker stays until you
+actually open it.
+
+Nothing fires while you are already looking at that session's pane, so watching
+Claude work does not ping you once per turn.
+
 ## Worktrees
 
 `+ branch` on any project creates a linked worktree at
@@ -76,6 +95,10 @@ Environment variables read at startup (see `server/config.js`):
 | `PM_TLS_CERT` / `PM_TLS_KEY` | `certs/pm-*.pem` | Certificate paths |
 | `PM_AUTH` | `0` | Require login |
 | `PM_AUTH_FILE` | `.pm-auth.json` | Credential file |
+| `PM_NOTIFY_SOUND` | `1` | Play a sound on a Claude notification (macOS) |
+| `PM_NOTIFY_VOLUME` | `0.4` | Volume for that sound |
+| `PM_NOTIFY_SOUND_WAITING` / `_DONE` | `Ping` / `Glass` | Names under `/System/Library/Sounds` |
+| `PM_HOOK_TOKEN_FILE` | `.pm-hook-token` | Shared secret for `/api/claude-hook` |
 
 The same settings can live in a **`pm.config.json`** at the repo root instead of env
 vars (env vars win). Copy `pm.config.example.json` to start. That file, the auth

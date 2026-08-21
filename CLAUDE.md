@@ -27,6 +27,7 @@ build step.
 | `server/git.js` | All git plumbing (porcelain v2 parsing, worktrees, diffs) |
 | `server/terminals.js` | tmux/pty session lifecycle |
 | `server/tasks.js` | Dev-server runners, script discovery |
+| `server/notify.js` | Claude Code hook signals, sound, hook token |
 | `client/src/store.ts` | zustand store + `visibleNodes()` sorting |
 | `client/src/components/Terminal.tsx` | xterm view bound to a `/pty` socket |
 
@@ -127,7 +128,12 @@ any session.
   deliberate toggle, is allowed to change the layout.
 - Colors come from the `@theme` block in `index.css`; each neon accent has an
   assigned meaning (cyan = selection, pink = branches, green = running/ahead,
-  amber = dirty, red = failing). Check contrast before dimming small text.
+  amber = dirty, red = failing, orange = a Claude session wants you). Check
+  contrast before dimming small text.
+- Only the *blocked* attention state (`waiting`) animates. `done` gets the same
+  orange as a static dot. Every marker pulsing at once is how a sidebar of 40
+  projects turns into a slot machine — motion has to stay scarce to mean
+  anything.
 - Night mode (toggle at the far right of the tab bar) redefines those same tokens
   under `:root[data-night]` at ~70% brightness, so any new color must be a token
   to follow it. Two exceptions need hand-editing: xterm's palette is set in JS
@@ -137,6 +143,33 @@ any session.
   fields never reach; colour 231 is pure white),
   and the `data-night` attribute is set at module load in `store.ts` rather than
   from an effect — from an effect the first paint would flash at full brightness.
+
+## Claude Code notifications
+
+Claude Code's own `Stop` and `Notification` hooks post to `/api/claude-hook`,
+which raises an orange indicator on the project row, slides a toast into the top
+right, and plays a macOS system sound. `npm run install-hooks` writes them into
+`~/.claude/settings.json` (`-- --remove` takes them out); they go in *user*
+settings on purpose, since the point is to hear about every project the app
+manages, not just this one.
+
+- **`/api/claude-hook` is the fourth route outside `requireAuth`** — a hook is a
+  short-lived local process with no cookie to present. It is gated on loopback
+  plus the token in `.pm-hook-token` (0600, gitignored, generated at boot), and
+  it is write-only into a notification: nothing there reads project state back
+  out. Keep it that way.
+- **The hook script must never write to stdout or stderr, and must always exit
+  0.** Anything it prints can surface mid-session in someone's Claude window.
+  That is why it swallows Node's `NODE_TLS_REJECT_UNAUTHORIZED` warning, and why
+  every failure path is a silent `exit 0`. It is registered `async` so Claude
+  never waits on the round trip.
+- Signals are dropped outright when you are already watching that pane —
+  `Terminal.tsx` reports `{type:'view'}` over `/pty` and the server counts
+  viewers per socket. `session.clients` cannot substitute: a hidden tab keeps
+  its socket open, so it would claim to be watching a pane nobody can see.
+- The indicator is sticky and the toast is not. The toast's ✕ dismisses only the
+  toast; the sidebar marker clears when you actually open that Claude pane. A
+  notice swatted away in passing must never be the last trace of it.
 
 ## Deployment & auth
 
