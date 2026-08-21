@@ -9,6 +9,7 @@ export const TABS: { id: TabId; label: string; hint: string }[] = [
   { id: 'changes', label: 'Changes', hint: 'Review before committing' },
   { id: 'tasks', label: 'Tasks', hint: 'Dev servers and scripts' },
   { id: 'prs', label: 'PRs', hint: 'Pull requests and CI' },
+  { id: 'soon', label: 'Soon', hint: 'What you mean to do here, soon but not now' },
 ]
 
 type State = {
@@ -32,6 +33,12 @@ type State = {
   /** A timed peek from keyboard navigation. Hover peeking is local to Sidebar. */
   navPeek: boolean
   newBranchFor: string | null
+  /**
+   * Text waiting to be typed into a node's Claude session the moment its
+   * socket is open - how "Start in Claude" on a todo becomes a prompt. Typed,
+   * never submitted: the person reads it and presses Enter.
+   */
+  pendingInput: Record<string, string>
   loading: boolean
   /** null = auth state unknown; true = login screen required; false = past the gate. */
   needsLogin: boolean | null
@@ -53,6 +60,9 @@ type State = {
   toggleNav: () => void
   peekNav: () => void
   setNewBranchFor: (projectId: string | null) => void
+  /** Queue text for a node's Claude tab and switch to it. */
+  startInClaude: (nodeId: string, text: string) => void
+  takePendingInput: (nodeId: string) => string | null
 }
 
 /**
@@ -131,6 +141,7 @@ export const useStore = create<State>((set, get) => ({
   navCollapsed: localStorage.getItem('pm:navCollapsed') === '1',
   navPeek: false,
   newBranchFor: null,
+  pendingInput: {},
   loading: true,
   needsLogin: null,
   meta: null,
@@ -250,6 +261,20 @@ export const useStore = create<State>((set, get) => ({
   },
 
   setNewBranchFor: (newBranchFor) => set({ newBranchFor }),
+
+  startInClaude: (nodeId, text) => {
+    set({ pendingInput: { ...get().pendingInput, [nodeId]: text } })
+    get().setActiveNode(nodeId)
+    get().setTab('claude')
+  },
+
+  takePendingInput: (nodeId) => {
+    const text = get().pendingInput[nodeId]
+    if (!text) return null
+    const { [nodeId]: _taken, ...rest } = get().pendingInput
+    set({ pendingInput: rest })
+    return text
+  },
 }))
 
 /** How long a keyboard-triggered peek stays open after the last keystroke. */

@@ -145,6 +145,7 @@ export function Terminal({
   // Claude hook that fires while you are watching doesn't notify you about what
   // is already in front of you. Held in a ref so a reconnect can re-send it.
   const viewingRef = useRef(!hidden)
+  const typePendingRef = useRef<(() => void) | null>(null)
 
   const night = useStore((s) => s.night)
 
@@ -255,6 +256,7 @@ export function Terminal({
         fitIfMeasurable()
         sendResize()
         ws.send(JSON.stringify({ type: 'view', active: viewingRef.current }))
+        typePending()
       }
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data)
@@ -280,6 +282,22 @@ export function Terminal({
       // onerror is always followed by onclose, which owns the reconnect.
       ws.onerror = () => {}
     }
+
+    /**
+     * "Start in Claude" from the Soon tab queues a prompt for this node; it is
+     * typed the moment a socket is open, not submitted - the person reads it
+     * and presses Enter. A brand-new tmux session is still booting `claude` at
+     * this point, and a pty buffers typed-ahead input, so the text lands in
+     * the prompt once it appears rather than in a shell underneath it.
+     */
+    const typePending = () => {
+      if (kind !== 'claude') return
+      const ws = wsRef.current
+      if (!ws || ws.readyState !== WebSocket.OPEN) return
+      const text = useStore.getState().takePendingInput(nodeId)
+      if (text) ws.send(JSON.stringify({ type: 'input', data: text }))
+    }
+    typePendingRef.current = typePending
 
     // Registered once on the persistent term; reads whichever socket is current.
     if (!task) {
@@ -308,6 +326,10 @@ export function Terminal({
       wsRef.current = null
     }
   }, [nodeId, kind, task, activated])
+
+  // The socket may already be open when a prompt is queued; type it now.
+  const pending = useStore((s) => s.pendingInput[nodeId])
+  useEffect(() => { if (pending) typePendingRef.current?.() }, [pending])
 
   // Re-fit when this tab becomes visible again; a hidden xterm can't measure itself.
   useEffect(() => {

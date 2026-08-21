@@ -6,7 +6,7 @@ Guidance for Claude Code when working in this repository.
 
 A local web app for managing every project under `~/Projects` — including itself.
 Left nav lists projects (grouped by containing folder, sorted by recent activity);
-the right panel has per-project tabs: Summary, Claude, Terminal, Changes, Tasks, PRs.
+the right panel has per-project tabs: Summary, Claude, Terminal, Changes, Tasks, PRs, Soon.
 
 ```bash
 npm install     # postinstall step is required — see "node-pty" below
@@ -28,8 +28,15 @@ build step.
 | `server/terminals.js` | tmux/pty session lifecycle |
 | `server/tasks.js` | Dev-server runners, script discovery |
 | `server/notify.js` | Claude Code hook signals, sound, hook token |
+| `server/memento.js` | Thin client for Memento's `/todos`; the Soon tab's data |
 | `client/src/store.ts` | zustand store + `visibleNodes()` sorting |
 | `client/src/components/Terminal.tsx` | xterm view bound to a `/pty` socket |
+
+**The Soon tab is a window, not a store.** Todos live in Memento; `server/memento.js`
+asks for `project:<slug of the repo dir name>` and shows exactly that — never an
+unscoped life todo, by decision (2026-08-20). The slug must match Memento's `lib/id.js`.
+"Start in Claude" queues text in `store.pendingInput`; `Terminal.tsx` types it into the
+Claude session once its socket is open and never presses Enter — the person submits.
 
 **Node vs project.** A *project* is a repo; a *node* is one worktree of it. Nodes
 are what the UI selects, keyboard-navigates, and opens terminals against. Node ids

@@ -1,4 +1,4 @@
-import type { Changes, Node, Project, PullRequest, Runner, Script, Summary } from './types'
+import type { Changes, Node, Project, PullRequest, Runner, Script, Summary, TodoHorizon, Todos } from './types'
 
 /** Notified whenever a request 401s, so the app can drop back to the login gate. */
 let onUnauthorized: (() => void) | null = null
@@ -47,6 +47,14 @@ export const api = {
     json<{ available: boolean; prs: PullRequest[]; viewer?: string | null; error?: string | null }>(`/api/nodes/${id}/prs`),
   createPr: (id: string, body: { title: string; body?: string; base?: string; draft?: boolean }) =>
     post<{ ok: boolean; url?: string; error?: string }>(`/api/nodes/${id}/prs`, body),
+
+  todos: (id: string) => json<Todos>(`/api/nodes/${id}/todos`),
+  addTodo: (id: string, body: { text: string; horizon?: TodoHorizon; due?: string }) =>
+    post<{ ok: boolean; error?: string }>(`/api/nodes/${id}/todos`, body),
+  doneTodo: (id: string, obs: string, reason?: string) =>
+    post<{ ok: boolean; error?: string }>(`/api/nodes/${id}/todos/${obs}/done`, { reason }),
+  bumpTodo: (id: string, obs: string, body: { horizon?: TodoHorizon; due?: string | null; reopen?: boolean } = {}) =>
+    post<{ ok: boolean; error?: string }>(`/api/nodes/${id}/todos/${obs}/bump`, body),
 
   tasks: (id: string) => json<{ scripts: Script[]; runners: Runner[] }>(`/api/nodes/${id}/tasks`),
   startTask: (id: string, name: string, command: string) =>
