@@ -14,5 +14,14 @@
   "auth": {
     "enabled": false,
     "//": "Run `npm run create-user` to create the login. Required if host is not loopback."
+  },
+
+  "notify": {
+    "//": "Claude Code hook notifications. Run `npm run install-hooks` to register them.",
+    "sound": true,
+    "volume": 0.4,
+    "//sounds": "Names under /System/Library/Sounds (macOS only).",
+    "waitingSound": "Ping",
+    "doneSound": "Glass"
   }
 }

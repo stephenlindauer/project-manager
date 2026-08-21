@@ -44,7 +44,7 @@ function scrypt(password, saltHex) {
 }
 
 /** Timing-safe equality that tolerates length differences. */
-function safeEqual(a, b) {
+export function safeEqual(a, b) {
   const ba = Buffer.from(String(a))
   const bb = Buffer.from(String(b))
   if (ba.length !== bb.length) {

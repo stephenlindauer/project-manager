@@ -28,6 +28,7 @@ const str = (envVal, fileVal, dflt) => envVal ?? fileVal ?? dflt
 
 const https = file.https ?? {}
 const auth = file.auth ?? {}
+const notify = file.notify ?? {}
 
 export const config = {
   /** Absolute path to the project root (where pm.config.json / certs live). */
@@ -54,6 +55,25 @@ export const config = {
   auth: {
     enabled: bool(process.env.PM_AUTH, auth.enabled, false),
     file: str(process.env.PM_AUTH_FILE, auth.file, path.join(root, '.pm-auth.json')),
+  },
+
+  /**
+   * Attention signals from Claude Code's Stop/Notification hooks. The sound is
+   * played by the *server*, on the machine the sessions actually run on — which
+   * is also the machine you are sitting at in the normal loopback setup.
+   */
+  notify: {
+    sound: bool(process.env.PM_NOTIFY_SOUND, notify.sound, true),
+    /** afplay volume, 0-1ish. Deliberately below full: this fires unprompted. */
+    volume: Number(process.env.PM_NOTIFY_VOLUME || notify.volume || 0.4),
+    /** Names under /System/Library/Sounds (macOS only). */
+    sounds: {
+      waiting: str(process.env.PM_NOTIFY_SOUND_WAITING, notify.waitingSound, 'Ping'),
+      done: str(process.env.PM_NOTIFY_SOUND_DONE, notify.doneSound, 'Glass'),
+    },
+    /** Shared secret the hook script presents; generated on first boot. */
+    tokenFile: str(process.env.PM_HOOK_TOKEN_FILE, notify.tokenFile,
+      path.join(root, '.pm-hook-token')),
   },
 
   /** Command launched in the "Claude" tmux tab. */

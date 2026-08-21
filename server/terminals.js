@@ -45,6 +45,10 @@ class Session extends EventEmitter {
     this.cwd = cwd
     this.buffer = ''
     this.clients = 0
+    // Clients with this pane actually on screen in a foreground browser tab.
+    // `clients` cannot stand in for it: a terminal stays connected while its tab
+    // is hidden, so it would report "being watched" for a pane nobody can see.
+    this.viewers = 0
     this.lastActivity = Date.now()
     this.unread = false
     this.proc = null
@@ -219,6 +223,7 @@ export function detachAll() {
     try { s.proc?.kill() } catch { /* already gone */ }
     s.proc = null
     s.clients = 0
+    s.viewers = 0
   }
 }
 
@@ -228,6 +233,11 @@ export function sessionSummaries() {
     alive: Boolean(s.proc), clients: s.clients,
     unread: s.unread, lastActivity: s.lastActivity,
   }))
+}
+
+/** True if someone has this session's pane on screen right now. */
+export function isWatched(nodeId, kind) {
+  return (sessions.get(`${nodeId}:${kind}`)?.viewers ?? 0) > 0
 }
 
 export async function killSession(nodeId, kind) {

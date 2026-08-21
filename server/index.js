@@ -15,6 +15,7 @@ import * as T from './terminals.js'
 import * as Tasks from './tasks.js'
 import * as GH from './gh.js'
 import * as Auth from './auth.js'
+import * as Notify from './notify.js'
 import { run } from './exec.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -22,6 +23,7 @@ const app = express()
 app.use(express.json({ limit: '2mb' }))
 
 Auth.loadAuth()
+Notify.loadHookToken()
 const cookieOpts = { secure: config.https.enabled }
 
 /** Resolve `:id` to a node, or 404. Every node-scoped route funnels through this. */
@@ -69,6 +71,59 @@ app.post('/api/logout', (req, res) => {
   res.setHeader('Set-Cookie', Auth.clearCookie())
   res.json({ ok: true })
 })
+
+// ------------------------------------------------------- claude code hooks
+
+/**
+ * Callback for Claude Code's Stop / Notification hooks — see
+ * `scripts/claude-notify-hook.js`, installed into ~/.claude/settings.json by
+ * `npm run install-hooks`.
+ *
+ * This is the fourth route that bypasses `requireAuth`, and it must stay so:
+ * the hook is a short-lived local process with no browser session to borrow a
+ * cookie from. It is guarded two other ways instead — the connection must come
+ * from loopback, and it must present the 0600 token from `.pm-hook-token`. It
+ * is also strictly *write-only into a notification*: nothing here reads project
+ * state back out, so a leaked token costs the attacker a toast, not a shell.
+ *
+ * Registered above the `requireAuth` mounts because Express matches in order.
+ */
+const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
+
+app.post('/api/claude-hook', (req, res) => {
+  if (!LOOPBACK.has(req.socket.remoteAddress)) {
+    return res.status(403).json({ error: 'loopback only' })
+  }
+  if (!Auth.safeEqual(req.get('x-pm-hook-token') ?? '', Notify.hookToken() ?? '\0')) {
+    return res.status(401).json({ error: 'bad hook token' })
+  }
+
+  const { event, cwd, session, message } = req.body ?? {}
+  // `Notification` means Claude is blocked on you; `Stop` means it finished.
+  const state = event === 'Notification' ? 'waiting' : 'done'
+  if (!Notify.isState(state)) return res.status(400).json({ error: 'unknown event' })
+
+  const nodeId = hookNodeId(session, cwd)
+  if (!nodeId) return res.json({ ok: true, delivered: false, reason: 'no matching project' })
+
+  res.json(Notify.raise({
+    nodeId,
+    state,
+    message: typeof message === 'string' ? message.slice(0, 240) : null,
+    watched: T.isWatched(nodeId, 'claude'),
+  }))
+})
+
+/**
+ * Which node a hook came from. The tmux session name is exact when the session
+ * was started by this app (`pm-claude-<nodeId>`); otherwise fall back to the
+ * shell's cwd, which also covers a `claude` run from a real terminal.
+ */
+function hookNodeId(session, cwd) {
+  const named = /^pm-claude-([0-9a-f]{6,})$/.exec(String(session ?? ''))?.[1]
+  if (named && store.find(named)) return named
+  return store.nodeContaining(typeof cwd === 'string' ? cwd : null)?.id ?? null
+}
 
 app.use('/api', Auth.requireAuth)
 app.use('/events', Auth.requireAuth)
@@ -166,6 +221,7 @@ app.delete('/api/nodes/:id/worktree', wrap(async (req, res) => {
   if (n.worktree.isMain) return res.status(400).json({ error: 'cannot remove the main worktree' })
 
   Tasks.stopNode(req.params.id)
+  Notify.clear(req.params.id)
   await T.killNode(req.params.id)
   const result = await G.removeWorktree(n.project.path, n.cwd, { force: req.query.force === '1' })
   if (result.failed) return res.status(400).json({ error: result.stderr.trim() })
@@ -230,6 +286,11 @@ app.post('/api/nodes/:id/tasks/stop', wrap(async (req, res) => {
 
 app.get('/api/sessions', wrap((req, res) => res.json(T.sessionSummaries())))
 
+/** Dismiss a node's Claude attention signal from the UI. */
+app.delete('/api/nodes/:id/attention', wrap((req, res) => {
+  res.json({ ok: Notify.clear(req.params.id) })
+}))
+
 app.delete('/api/nodes/:id/sessions/:kind', wrap(async (req, res) => {
   res.json({ ok: await T.killSession(req.params.id, req.params.kind) })
 }))
@@ -273,10 +334,18 @@ app.get('/events', (req, res) => {
   const onNodes = (nodes) => send('nodes', nodes)
   const onNode = (n) => send('node', n)
   const onProjects = () => send('projects', { projects: store.projects, nodes: store.nodes })
+  const onAttention = (list) => send('attention', list)
+  const onToast = (t) => send('claude-toast', t)
 
   store.on('nodes', onNodes)
   store.on('node', onNode)
   store.on('projects', onProjects)
+  Notify.notifications.on('attention', onAttention)
+  Notify.notifications.on('toast', onToast)
+
+  // A page that loads (or reconnects) after a signal was raised still has to
+  // learn about it — the sidebar indicator is sticky state, not just an event.
+  send('attention', Notify.attentionList())
 
   const taskTick = setInterval(() => sendIfChanged('tasks', Tasks.allRunners()), 2000)
   const sessionTick = setInterval(() => sendIfChanged('sessions', T.sessionSummaries()), 2000)
@@ -286,6 +355,8 @@ app.get('/events', (req, res) => {
     store.off('nodes', onNodes)
     store.off('node', onNode)
     store.off('projects', onProjects)
+    Notify.notifications.off('attention', onAttention)
+    Notify.notifications.off('toast', onToast)
     clearInterval(taskTick)
     clearInterval(sessionTick)
     clearInterval(heartbeat)
@@ -338,6 +409,20 @@ wss.on('connection', (ws, req, url) => {
 
   const session = T.getSession(nodeId, kind, hit.worktree.path)
 
+  // Opening the Claude pane *is* the acknowledgement — there is nothing left to
+  // flag once you are looking at it.
+  if (kind === 'claude') Notify.clear(nodeId)
+
+  // The client reports whether this pane is on screen in a foreground tab, so a
+  // Stop hook that fires while you watch Claude work stays silent. Tracked per
+  // socket so two viewers can't leave the count stuck above zero.
+  let viewing = false
+  const setViewing = (on) => {
+    if (on === viewing) return
+    viewing = on
+    session.viewers = Math.max(0, session.viewers + (on ? 1 : -1))
+  }
+
   // The client reports its measured size up-front so the session can be created
   // at the right dimensions rather than repainting after the first resize.
   // `resize` rejects sizes that are too small to be a real measurement, so a
@@ -371,9 +456,14 @@ wss.on('connection', (ws, req, url) => {
     if (msg.type === 'input') session.write(msg.data)
     else if (msg.type === 'resize') session.resize(msg.cols, msg.rows)
     else if (msg.type === 'restart') { session.destroy().then(() => session.spawn()) }
+    else if (msg.type === 'view') {
+      setViewing(Boolean(msg.active))
+      if (viewing && kind === 'claude') Notify.clear(nodeId)
+    }
   })
 
   ws.on('close', () => {
+    setViewing(false)
     session.off('data', onData)
     session.off('exit', onExit)
     session.detach()
@@ -409,6 +499,8 @@ server.listen(config.port, config.host, async () => {
   console.log(`[pm] tls        ${config.https.enabled ? 'on' : 'off'}`)
   console.log(`[pm] auth       ${authStatusLine()}`)
   console.log(`[pm] terminals  ${backend ? 'tmux (persistent)' : 'node-pty (tmux not found)'}`)
+  console.log('[pm] hooks      POST /api/claude-hook  ' +
+    `(sound ${config.notify.sound ? 'on' : 'off'} — install with: npm run install-hooks)`)
 
   // The app hands out full shell access. Loudly flag the dangerous combination
   // of network exposure without a login.

@@ -144,6 +144,25 @@ class Store extends EventEmitter {
     const resolved = path.resolve(p)
     return this.nodes.find((n) => n.cwd === resolved) ?? null
   }
+
+  /**
+   * Like `nodeForPath`, but also matches a path *inside* a worktree — the
+   * deepest one wins, so a linked worktree is never mistaken for its main repo.
+   *
+   * Kept separate from `nodeForPath` because that one guards `/api/open`, where
+   * an exact match is the point; here the input is a shell's cwd, which may have
+   * wandered into a subdirectory.
+   */
+  nodeContaining(p) {
+    if (!p) return null
+    const resolved = path.resolve(p)
+    let best = null
+    for (const n of this.nodes) {
+      if (resolved !== n.cwd && !resolved.startsWith(`${n.cwd}${path.sep}`)) continue
+      if (!best || n.cwd.length > best.cwd.length) best = n
+    }
+    return best
+  }
 }
 
 export const store = new Store()
