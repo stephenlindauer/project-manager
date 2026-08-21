@@ -131,7 +131,10 @@ any session.
 - Night mode (toggle at the far right of the tab bar) redefines those same tokens
   under `:root[data-night]` at ~70% brightness, so any new color must be a token
   to follow it. Two exceptions need hand-editing: xterm's palette is set in JS
-  (`XTERM_THEME` / `XTERM_THEME_NIGHT` in `Terminal.tsx`, kept in step by hand),
+  (`XTERM_THEME` / `XTERM_THEME_NIGHT` in `Terminal.tsx`, kept in step by hand —
+  and the night theme's `extendedAnsi` is load-bearing, not decoration, because
+  a TUI draws almost entirely in 256-colour `38;5;N` codes that the 16 named
+  fields never reach; colour 231 is pure white),
   and the `data-night` attribute is set at module load in `store.ts` rather than
   from an effect — from an effect the first paint would flash at full brightness.
 

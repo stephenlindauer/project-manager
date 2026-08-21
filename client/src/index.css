@@ -31,34 +31,38 @@
 }
 
 /**
- * Night mode — same hues, roughly 70% of the brightness, so the palette keeps
+ * Night mode — same hues at roughly half the brightness, so the palette keeps
  * every accent's meaning while the whites stop glaring in a dark room. Tailwind
  * v4 utilities compile to `var(--color-…)`, so redefining the tokens here
  * re-colours the whole app; `:root[data-night]` outranks the `@theme` block on
  * bare `:root`. The attribute is set on <html> by the store, before first paint.
+ *
+ * Body text is the floor: `--color-ink` sits at ~4.8:1 against `--color-bg`, and
+ * dimming it further would drop 13px text below the readable contrast line. Take
+ * any further reduction out of the accents and greys instead.
  */
 :root[data-night] {
-  --color-bg: #050506;
-  --color-panel: #0a0a0d;
-  --color-panel-2: #101015;
-  --color-line: #1b1b23;
-  --color-line-bright: #26262f;
+  --color-bg: #030304;
+  --color-panel: #07070a;
+  --color-panel-2: #0c0c10;
+  --color-line: #15151b;
+  --color-line-bright: #1e1e26;
 
   /* The whites take the deepest cut — they cover the most screen area. */
-  --color-ink: #a6a6b3;
-  --color-muted: #64646f;
+  --color-ink: #7a7a85;
+  --color-muted: #565660;
 
-  --color-accent: #00a0b3;
-  --color-neon-pink: #b21f64;
-  --color-neon-purple: #7b4bb3;
-  --color-ok: #21b273;
-  --color-warn: #b28832;
-  --color-bad: #b22b46;
+  --color-accent: #007a8a;
+  --color-neon-pink: #85174a;
+  --color-neon-purple: #5c3886;
+  --color-ok: #198656;
+  --color-warn: #866625;
+  --color-bad: #852034;
 
-  /* Glows are pure added light; halve them on top of the dimmer accents. */
-  --glow-text-strength: 35%;
-  --shadow-neon: 0 0 8px color-mix(in srgb, var(--color-accent) 30%, transparent);
-  --shadow-neon-pink: 0 0 8px color-mix(in srgb, var(--color-neon-pink) 30%, transparent);
+  /* Glows are pure added light; cut them hardest of all. */
+  --glow-text-strength: 22%;
+  --shadow-neon: 0 0 8px color-mix(in srgb, var(--color-accent) 18%, transparent);
+  --shadow-neon-pink: 0 0 8px color-mix(in srgb, var(--color-neon-pink) 18%, transparent);
 }
 
 html, body, #root {

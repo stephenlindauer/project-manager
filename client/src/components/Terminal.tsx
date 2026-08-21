@@ -32,35 +32,80 @@ const XTERM_THEME = {
   brightWhite: '#f4f4fb',
 }
 
+/** How much of the day palette's brightness night mode keeps. Matches the ratio
+ *  the `:root[data-night]` tokens in index.css use (#e9e9f2 ink → #7a7a85). */
+const NIGHT_DIM = 0.52
+
 /**
- * The same palette at ~70% brightness, for night mode. xterm's colours are set
+ * A dimmed copy of xterm's colours 16-255.
+ *
+ * The named `ITheme` fields below only reach the first 16 ANSI slots and the
+ * defaults. Everything a TUI emits as `\x1b[38;5;Nm` — which is most of what
+ * Claude Code and any syntax highlighter actually draw with — indexes into this
+ * extended palette instead, and without `extendedAnsi` it renders from xterm's
+ * built-in table at full brightness. Colour 231 is pure white, so night mode
+ * without this is still a white screen.
+ *
+ * It also catches truecolour in practice: tmux advertises `tmux-256color` with
+ * no RGB capability here, so it downsamples 24-bit output into this same space.
+ *
+ * The layout is fixed: 16-231 are a 6x6x6 cube over CUBE_LEVELS, 232-255 are 24
+ * greys. Scaling by NIGHT_DIM puts 256-colour white at the same brightness as
+ * `--color-ink`, so terminal text matches the rest of the app.
+ */
+const CUBE_LEVELS = [0, 95, 135, 175, 215, 255]
+
+function dimmedExtendedAnsi(dim: number): string[] {
+  const hex = (...rgb: number[]) =>
+    '#' + rgb.map((v) => Math.round(v * dim).toString(16).padStart(2, '0')).join('')
+
+  const out: string[] = []
+  for (const r of CUBE_LEVELS)
+    for (const g of CUBE_LEVELS)
+      for (const b of CUBE_LEVELS) out.push(hex(r, g, b))
+  for (let i = 0; i < 24; i++) {
+    const v = 8 + i * 10
+    out.push(hex(v, v, v))
+  }
+  return out
+}
+
+/**
+ * The same palette at ~50% brightness, for night mode. xterm's colours are set
  * in JS, so they cannot ride on the CSS tokens in index.css the way the rest of
- * the app does — this table has to be kept in step with the one above by hand.
+ * the app does — this table has to be kept in step with the one above, and with
+ * the `:root[data-night]` block, by hand.
+ *
+ * The day theme deliberately has no `extendedAnsi`: xterm rebuilds its palette
+ * from the defaults on every theme change, so omitting it restores the standard
+ * 256 colours rather than leaving the dimmed ones behind.
  */
 const XTERM_THEME_NIGHT = {
-  background: '#050506',
-  foreground: '#a6a6b3',
-  cursor: '#00a0b3',
-  cursorAccent: '#050506',
-  selectionBackground: 'rgba(0, 229, 255, 0.18)',
+  extendedAnsi: dimmedExtendedAnsi(NIGHT_DIM),
 
-  black: '#101015',
-  red: '#b22b46',
-  green: '#21b273',
-  yellow: '#b28832',
-  blue: '#00a0b3',
-  magenta: '#b21f64',
-  cyan: '#42a8b3',
-  white: '#8d8d97',
+  background: '#030304',
+  foreground: '#7a7a85',
+  cursor: '#007a8a',
+  cursorAccent: '#030304',
+  selectionBackground: 'rgba(0, 229, 255, 0.14)',
 
-  brightBlack: '#353540',
-  brightRed: '#b24b5f',
-  brightGreen: '#4db286',
-  brightYellow: '#b2965b',
-  brightBlue: '#4ba7b2',
-  brightMagenta: '#b24b7b',
-  brightCyan: '#6eacb3',
-  brightWhite: '#aaaab0',
+  black: '#0c0c10',
+  red: '#852034',
+  green: '#198656',
+  yellow: '#866625',
+  blue: '#007a8a',
+  magenta: '#85174a',
+  cyan: '#317e86',
+  white: '#6a6a71',
+
+  brightBlack: '#282830',
+  brightRed: '#863847',
+  brightGreen: '#3a8664',
+  brightYellow: '#867044',
+  brightBlue: '#387d86',
+  brightMagenta: '#86385c',
+  brightCyan: '#528186',
+  brightWhite: '#808084',
 }
 
 const themeFor = (night: boolean) => (night ? XTERM_THEME_NIGHT : XTERM_THEME)
