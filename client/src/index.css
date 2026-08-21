@@ -25,6 +25,7 @@
   --color-ok: #2fffa4; /* acid green — passing, running, ahead */
   --color-warn: #ffc247; /* amber — dirty working tree */
   --color-bad: #ff3d64; /* hot red — failing, conflicts */
+  --color-attn: #ff7a29; /* burnt orange — a Claude session wants you */
 
   --shadow-neon: 0 0 8px color-mix(in srgb, var(--color-accent) 55%, transparent);
   --shadow-neon-pink: 0 0 8px color-mix(in srgb, var(--color-neon-pink) 55%, transparent);
@@ -58,6 +59,7 @@
   --color-ok: #198656;
   --color-warn: #866625;
   --color-bad: #852034;
+  --color-attn: #93441a;
 
   /* Glows are pure added light; cut them hardest of all. */
   --glow-text-strength: 22%;
@@ -124,6 +126,44 @@ input:focus, button:focus-visible {
 }
 @utility glow-pink {
   box-shadow: var(--shadow-neon-pink);
+}
+
+/**
+ * "A Claude session wants you", in two places: a radar ping on the sidebar row
+ * and the toast that slides in from the right.
+ *
+ * The ring expands and fades rather than the dot flashing. Motion in the corner
+ * of your eye is what makes it findable in a 40-row sidebar, but a blink at that
+ * size reads as a fault indicator — this reads as waiting. The dot itself never
+ * changes opacity, so a paused animation still leaves a legible marker.
+ */
+@keyframes pm-attn-ping {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-attn) 60%, transparent); }
+  70%, 100% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--color-attn) 0%, transparent); }
+}
+@utility attn-ping {
+  animation: pm-attn-ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+@keyframes pm-toast-in {
+  from { transform: translateX(115%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+@keyframes pm-toast-out {
+  from { transform: translateX(0); opacity: 1; }
+  to { transform: translateX(115%); opacity: 0; }
+}
+@utility toast-in {
+  animation: pm-toast-in 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@utility toast-out {
+  animation: pm-toast-out 220ms ease-in both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Keep the colour and the glow; drop the movement. */
+  .attn-ping { animation: none; box-shadow: 0 0 7px var(--color-attn); }
+  .toast-in, .toast-out { animation-duration: 1ms; }
 }
 
 .xterm .xterm-viewport { background-color: transparent !important; }

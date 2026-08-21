@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { api, authApi, setUnauthorizedHandler } from './api'
-import type { Node, Project, Runner, SessionInfo, TabId } from './types'
+import type { Attention, Node, Project, Runner, SessionInfo, TabId, Toast } from './types'
 
 export const TABS: { id: TabId; label: string; hint: string }[] = [
   { id: 'summary', label: 'Summary', hint: 'Project overview and git state' },
@@ -16,6 +16,10 @@ type State = {
   nodes: Node[]
   runners: Runner[]
   sessions: SessionInfo[]
+  /** Sticky "Claude wants you" state per node, keyed by node id. */
+  attention: Record<string, Attention>
+  /** Transient notifications, oldest first. At most one per node. */
+  toasts: Toast[]
   activeNodeId: string | null
   activeTab: TabId
   /** Remembers the last tab per node so switching projects feels like tabs in an editor. */
@@ -42,6 +46,9 @@ type State = {
   moveNode: (delta: number) => void
   moveTab: (delta: number) => void
   setPalette: (open: boolean) => void
+  dismissToast: (id: string) => void
+  showNode: (id: string) => void
+  clearAttention: (id: string) => void
   toggleNight: () => void
   toggleNav: () => void
   peekNav: () => void
@@ -114,6 +121,8 @@ export const useStore = create<State>((set, get) => ({
   nodes: [],
   runners: [],
   sessions: [],
+  attention: {},
+  toasts: [],
   activeNodeId: null,
   activeTab: 'summary',
   tabByNode: {},
@@ -190,6 +199,33 @@ export const useStore = create<State>((set, get) => ({
 
   setPalette: (paletteOpen) => set({ paletteOpen }),
 
+  dismissToast: (id) => {
+    const toast = get().toasts.find((t) => t.id === id)
+    if (!toast || toast.leaving) return
+    // Mark first, drop after the slide-out. Removing outright would make the
+    // toast vanish rather than leave.
+    set({ toasts: get().toasts.map((t) => (t.id === id ? { ...t, leaving: true } : t)) })
+    setTimeout(
+      () => useStore.setState((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
+      TOAST_EXIT_MS,
+    )
+  },
+
+  /** Jump to a node's Claude session — what clicking a toast does. */
+  showNode: (id) => {
+    get().setActiveNode(id)
+    get().setTab('claude')
+    get().clearAttention(id)
+  },
+
+  clearAttention: (id) => {
+    if (!get().attention[id]) return
+    // Drop it locally first; the server echoes the same state back over SSE.
+    const { [id]: _gone, ...rest } = get().attention
+    set({ attention: rest })
+    api.clearAttention(id).catch(() => {})
+  },
+
   toggleNight: () => {
     const night = !get().night
     localStorage.setItem('pm:night', night ? '1' : '0')
@@ -219,6 +255,12 @@ export const useStore = create<State>((set, get) => ({
 /** How long a keyboard-triggered peek stays open after the last keystroke. */
 const PEEK_MS = 1600
 let peekTimer: ReturnType<typeof setTimeout> | null = null
+
+/** Toast lifetime, and how long the slide-out runs. Keep in step with index.css. */
+const TOAST_MS = 7000
+const TOAST_EXIT_MS = 220
+/** Beyond this the stack stops being glanceable and starts being a wall. */
+const MAX_TOASTS = 4
 
 /**
  * Live updates from the server. Node-level git refreshes are merged in place so
@@ -250,6 +292,22 @@ function connectEvents(set: (p: Partial<State>) => void, get: () => State) {
   })
   es.addEventListener('sessions', (e) => {
     set({ sessions: JSON.parse((e as MessageEvent).data) })
+  })
+
+  // Sticky state: sent whole, including once on connect, so a page opened after
+  // the signal still shows the indicator.
+  es.addEventListener('attention', (e) => {
+    const list = JSON.parse((e as MessageEvent).data) as Attention[]
+    set({ attention: Object.fromEntries(list.map((a) => [a.nodeId, a])) })
+  })
+
+  es.addEventListener('claude-toast', (e) => {
+    const toast = JSON.parse((e as MessageEvent).data) as Toast
+    // One toast per node: a project that finishes twice replaces its own notice
+    // instead of stacking two of them.
+    const kept = get().toasts.filter((t) => t.nodeId !== toast.nodeId)
+    set({ toasts: [...kept, toast].slice(-MAX_TOASTS) })
+    setTimeout(() => useStore.getState().dismissToast(toast.id), TOAST_MS)
   })
 }
 

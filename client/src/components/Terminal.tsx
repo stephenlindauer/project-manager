@@ -141,6 +141,10 @@ export function Terminal({
   const termRef = useRef<XTerm | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
+  // Whether this pane is genuinely on screen — reported to the server so a
+  // Claude hook that fires while you are watching doesn't notify you about what
+  // is already in front of you. Held in a ref so a reconnect can re-send it.
+  const viewingRef = useRef(!hidden)
 
   const night = useStore((s) => s.night)
 
@@ -250,6 +254,7 @@ export function Terminal({
         }
         fitIfMeasurable()
         sendResize()
+        ws.send(JSON.stringify({ type: 'view', active: viewingRef.current }))
       }
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data)
@@ -319,6 +324,28 @@ export function Terminal({
       term.focus()
     })
     return () => cancelAnimationFrame(id)
+  }, [hidden, activated])
+
+  /**
+   * Tell the server whether this pane is actually being looked at. Tab-hidden
+   * and browser-backgrounded both count as not looking — the socket stays open
+   * in either case, so connectedness alone cannot answer the question.
+   */
+  useEffect(() => {
+    if (!activated) return
+    const report = () => {
+      const active = !hidden && document.visibilityState === 'visible'
+      if (active === viewingRef.current) return
+      viewingRef.current = active
+      const ws = wsRef.current
+      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'view', active }))
+    }
+    report()
+    document.addEventListener('visibilitychange', report)
+    // Deliberately no reset here: clearing the ref in cleanup would make the
+    // re-run see "already false" and skip sending the message that says so.
+    // Closing the socket is what tells the server about an unmount.
+    return () => document.removeEventListener('visibilitychange', report)
   }, [hidden, activated])
 
   // Recolour in place. Swapping `options.theme` only repaints the browser-side

@@ -4,6 +4,7 @@ import { MainPanel } from './components/MainPanel'
 import { NewBranchDialog } from './components/NewBranchDialog'
 import { Palette } from './components/Palette'
 import { Sidebar } from './components/Sidebar'
+import { Toasts } from './components/Toasts'
 import { useActiveNode, useStore } from './store'
 
 export default function App() {
@@ -36,6 +37,7 @@ export default function App() {
       )}
       <Palette />
       <NewBranchDialog />
+      <Toasts />
     </div>
   )
 }

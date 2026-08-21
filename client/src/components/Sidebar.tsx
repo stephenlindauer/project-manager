@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { sectionOf, useStore } from '../store'
 import { shortAgo } from '../lib/time'
-import type { Node } from '../types'
+import type { Attention, Node } from '../types'
 import { StatusBadges } from './StatusBadges'
 
 type Section = { key: string; group: string | null; projects: Map<string, Node[]> }
@@ -56,6 +56,7 @@ export function Sidebar() {
   const rescan = useStore((s) => s.rescan)
   const sessions = useStore((s) => s.sessions)
   const runners = useStore((s) => s.runners)
+  const attention = useStore((s) => s.attention)
   const collapsed = useStore((s) => s.navCollapsed)
   const peek = useStore((s) => s.navPeek)
   const toggleNav = useStore((s) => s.toggleNav)
@@ -72,7 +73,11 @@ export function Sidebar() {
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      {collapsed && <Rail onExpand={toggleNav} active={shown} />}
+      {/* Collapsed, the rail is the only thing on screen — so it has to carry the
+          signal too, or a notification for an unselected project is invisible. */}
+      {collapsed && (
+        <Rail onExpand={toggleNav} active={shown} attention={Object.keys(attention).length > 0} />
+      )}
 
       <aside
         className={[
@@ -132,6 +137,7 @@ export function Sidebar() {
                     onSelect={() => setActiveNode(main.id)}
                     sessions={sessions}
                     runners={runners}
+                    attention={attention[main.id] ?? null}
                     onNewBranch={() => setNewBranchFor(projectId)}
                     indent={!!group}
                   />
@@ -156,6 +162,7 @@ export function Sidebar() {
                       onSelect={() => setActiveNode(n.id)}
                       sessions={sessions}
                       runners={runners}
+                      attention={attention[n.id] ?? null}
                     />
                   ))}
                 </div>
@@ -179,16 +186,22 @@ export function Sidebar() {
  * target that brings the panel back, and a click target that re-pins it.
  * Without it the only way back would be the keyboard.
  */
-function Rail({ onExpand, active }: { onExpand: () => void; active: boolean }) {
+function Rail({ onExpand, active, attention }: {
+  onExpand: () => void
+  active: boolean
+  attention: boolean
+}) {
   return (
     <button
       onClick={onExpand}
-      title="Show projects (⌘B)"
+      title={attention ? 'Claude wants you — show projects (⌘B)' : 'Show projects (⌘B)'}
       className="group h-full w-full cursor-default border-r border-line bg-panel"
     >
       <span
         className={`mx-auto block h-16 w-[2px] rounded-full transition-colors ${
-          active ? 'bg-accent shadow-neon' : 'bg-line group-hover:bg-accent/60'
+          attention && !active
+            ? 'bg-attn attn-ping'
+            : active ? 'bg-accent shadow-neon' : 'bg-line group-hover:bg-accent/60'
         }`}
       />
     </button>
@@ -219,8 +232,14 @@ function ProjectLabel({ name, count, onNewBranch, indent }: {
   )
 }
 
+/** Wording for the attention pip's tooltip, and for the toast's heading. */
+export const ATTENTION_LABEL: Record<Attention['state'], string> = {
+  waiting: 'Claude is waiting on you',
+  done: 'Claude finished',
+}
+
 function NodeRow({
-  node, active, nested, indent, onSelect, onNewBranch, sessions, runners,
+  node, active, nested, indent, onSelect, onNewBranch, sessions, runners, attention,
 }: {
   node: Node
   active: boolean
@@ -230,6 +249,7 @@ function NodeRow({
   onNewBranch?: () => void
   sessions: { nodeId: string; unread: boolean; alive: boolean }[]
   runners: { nodeId: string; running: boolean }[]
+  attention: Attention | null
 }) {
   const unread = sessions.some((s) => s.nodeId === node.id && s.unread)
   const running = runners.some((r) => r.nodeId === node.id && r.running)
@@ -273,6 +293,22 @@ function NodeRow({
         {nested ? (node.branch ?? node.label) : node.label}
       </span>
 
+      {/*
+        Ordered loudest-first. The attention pip is the one dot on this row that
+        moves, and it is a touch larger than the others — it is the only marker
+        here that is asking for something rather than reporting a state.
+      */}
+      {attention && (
+        <span
+          className={`size-[7px] shrink-0 rounded-full bg-attn ${
+            // Only a session that is actually blocked on you pings. A finished
+            // one is still worth finding, but it is not waiting for anything —
+            // a static dot says so without competing for attention.
+            attention.state === 'waiting' ? 'attn-ping' : 'shadow-[0_0_7px_var(--color-attn)]'
+          }`}
+          title={`${ATTENTION_LABEL[attention.state]}${attention.message ? ` — ${attention.message}` : ''}`}
+        />
+      )}
       {running && (
         <span className="size-1.5 shrink-0 rounded-full bg-ok shadow-[0_0_6px_var(--color-ok)]" title="Task running" />
       )}

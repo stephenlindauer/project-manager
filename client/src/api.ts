@@ -58,6 +58,9 @@ export const api = {
   removeWorktree: (id: string, force = false) =>
     json<{ ok: boolean }>(`/api/nodes/${id}/worktree?force=${force ? 1 : 0}`, { method: 'DELETE' }),
 
+  clearAttention: (id: string) =>
+    json<{ ok: boolean }>(`/api/nodes/${id}/attention`, { method: 'DELETE' }),
+
   killSession: (id: string, kind: string) =>
     json<{ ok: boolean }>(`/api/nodes/${id}/sessions/${kind}`, { method: 'DELETE' }),
 

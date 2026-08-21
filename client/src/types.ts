@@ -91,6 +91,22 @@ export type SessionInfo = {
   lastActivity: number
 }
 
+/**
+ * A Claude Code session asking for you, raised by its Stop/Notification hooks.
+ * `waiting` = blocked on your reply or a permission prompt; `done` = finished.
+ */
+export type AttentionState = 'waiting' | 'done'
+
+export type Attention = {
+  nodeId: string
+  state: AttentionState
+  message: string | null
+  at: number
+}
+
+/** One transient notification. `leaving` drives the slide-out before removal. */
+export type Toast = Attention & { id: string; leaving?: boolean }
+
 export type PullRequest = {
   number: number
   title: string

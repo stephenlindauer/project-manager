@@ -18,6 +18,7 @@ export function MainPanel({ node }: { node: Node }) {
   const activeTab = useStore((s) => s.activeTab)
   const setTab = useStore((s) => s.setTab)
   const sessions = useStore((s) => s.sessions)
+  const attention = useStore((s) => s.attention)
   const setNewBranchFor = useStore((s) => s.setNewBranchFor)
   const rescan = useStore((s) => s.rescan)
   const night = useStore((s) => s.night)
@@ -71,6 +72,9 @@ export function MainPanel({ node }: { node: Node }) {
             (s) => s.nodeId === node.id && s.unread &&
               ((t.id === 'claude' && s.kind === 'claude') || (t.id === 'terminal' && s.kind === 'shell')),
           )
+          // Attention outranks unread on the Claude tab: "it wants you" is
+          // strictly more urgent than "it printed something".
+          const wants = t.id === 'claude' && Boolean(attention[node.id])
           return (
             <button
               key={t.id}
@@ -83,7 +87,9 @@ export function MainPanel({ node }: { node: Node }) {
               }`}
             >
               {t.label}
-              {unread && (
+              {wants ? (
+                <span className="ml-1.5 inline-block size-[7px] rounded-full bg-attn align-middle attn-ping" />
+              ) : unread && (
                 <span className="ml-1.5 inline-block size-1.5 rounded-full bg-accent align-middle shadow-neon" />
               )}
             </button>
