@@ -9,6 +9,7 @@ export const TABS: { id: TabId; label: string; hint: string }[] = [
   { id: 'changes', label: 'Changes', hint: 'Review before committing' },
   { id: 'tasks', label: 'Tasks', hint: 'Dev servers and scripts' },
   { id: 'prs', label: 'PRs', hint: 'Pull requests and CI' },
+  { id: 'soon', label: 'Soon', hint: 'What you mean to do here, soon but not now' },
 ]
 
 type State = {
@@ -34,8 +35,8 @@ type State = {
   newBranchFor: string | null
   /**
    * Text waiting to be typed into a node's Claude session the moment its
-   * socket is open (`startInClaude`). Typed, never submitted: the person reads
-   * it and presses Enter.
+   * socket is open - how "Start in Claude" on a todo becomes a prompt. Typed,
+   * never submitted: the person reads it and presses Enter.
    */
   pendingInput: Record<string, string>
   loading: boolean

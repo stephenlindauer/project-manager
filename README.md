@@ -22,7 +22,7 @@ folder (so the nine repos inside `punchup/` nest under a `punchup` heading). Git
 worktrees appear as children of their repo, so multiple branches of the same project
 are always visible side by side.
 
-The right panel has six tabs for the selected project:
+The right panel has seven tabs for the selected project:
 
 | Tab | What it does |
 | --- | --- |
@@ -32,6 +32,13 @@ The right panel has six tabs for the selected project:
 | **Changes** | Staged / modified / untracked files with unified diffs — review before committing |
 | **Tasks** | Scripts detected from `package.json` (and Cargo/Go/Make); start & stop dev servers, with detected ports linked |
 | **PRs** | Open pull requests with CI rollup status; create a PR from the current branch |
+| **Soon** | What you mean to do here, soon but not now — this project's todos from [Memento](https://github.com/stephenlindauer/memento), grouped now / soon / someday, with *Start in Claude* to turn one into a prompt |
+
+The Soon tab shows **only todos attached to this project** (`project:<repo dir name>`);
+life todos live in Memento's own UI. Undated todos fade from the list after 90 days
+untouched (they stay in Memento under *Faded*; *bump* brings one back), a dated todo
+never fades and is overdue past its date. It reads `~/.memento/config.json` for the
+server and token — the same file `mem` uses — and says so if that is missing.
 
 ## Keyboard
 
@@ -98,6 +105,8 @@ Environment variables read at startup (see `server/config.js`):
 | `PM_MAX_DEPTH` | `3` | How deep to look for repos |
 | `PM_PORT` | `5274` | API/WebSocket port |
 | `PM_CLAUDE_COMMAND` | `claude` | Command launched in the Claude tab |
+| `PM_MEMENTO_CONFIG` | `~/.memento/config.json` | Where the Soon tab finds Memento's `{api, token}` |
+| `PM_MEMENTO_TIMEOUT` | `8000` | Memento request timeout, ms |
 | `PM_HOST` | `127.0.0.1` | Interface to bind (`0.0.0.0` = all) |
 | `PM_HTTPS` | `0` | Serve over TLS |
 | `PM_TLS_CERT` / `PM_TLS_KEY` | `certs/pm-*.pem` | Certificate paths |

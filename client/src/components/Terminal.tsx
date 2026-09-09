@@ -284,8 +284,9 @@ export function Terminal({
     }
 
     /**
-     * `startInClaude` queues a prompt for this node; it is typed the moment a
-     * socket is open, not submitted - the person reads it and presses Enter. A brand-new tmux session is still booting `claude` at
+     * "Start in Claude" from the Soon tab queues a prompt for this node; it is
+     * typed the moment a socket is open, not submitted - the person reads it
+     * and presses Enter. A brand-new tmux session is still booting `claude` at
      * this point, and a pty buffers typed-ahead input, so the text lands in
      * the prompt once it appears rather than in a shell underneath it.
      */
