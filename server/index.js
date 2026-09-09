@@ -14,7 +14,6 @@ import * as G from './git.js'
 import * as T from './terminals.js'
 import * as Tasks from './tasks.js'
 import * as GH from './gh.js'
-import * as Memento from './memento.js'
 import * as Auth from './auth.js'
 import * as Notify from './notify.js'
 import { run } from './exec.js'
@@ -255,31 +254,6 @@ app.get('/api/nodes/:id/prs', wrap(async (req, res) => {
 app.post('/api/nodes/:id/prs', wrap(async (req, res) => {
   const n = node(req, res); if (!n) return
   res.json(await GH.createPr(n.cwd, req.body ?? {}))
-}))
-
-// ----------------------------------------------------------------- todos
-// The Soon tab. Scoped to the project by name (Memento slugs it); see memento.js.
-
-app.get('/api/nodes/:id/todos', wrap(async (req, res) => {
-  const n = node(req, res); if (!n) return
-  res.json(await Memento.todos(n.project.name))
-}))
-
-app.post('/api/nodes/:id/todos', wrap(async (req, res) => {
-  const n = node(req, res); if (!n) return
-  const text = String(req.body?.text ?? '').trim()
-  if (!text) return res.status(400).json({ error: 'text required' })
-  res.json(await Memento.add(n.project.name, req.body))
-}))
-
-app.post('/api/nodes/:id/todos/:obs/done', wrap(async (req, res) => {
-  const n = node(req, res); if (!n) return
-  res.json(await Memento.done(String(req.params.obs), req.body?.reason))
-}))
-
-app.post('/api/nodes/:id/todos/:obs/bump', wrap(async (req, res) => {
-  const n = node(req, res); if (!n) return
-  res.json(await Memento.bump(String(req.params.obs), req.body ?? {}))
 }))
 
 // ----------------------------------------------------------------- tasks

@@ -2,6 +2,7 @@
   "name": "project-manager",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "postinstall": "node scripts/fix-pty-helper.js",

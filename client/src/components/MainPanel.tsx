@@ -4,7 +4,6 @@ import { TABS, useStore } from '../store'
 import type { Node, TabId } from '../types'
 import { ChangesTab } from './ChangesTab'
 import { PrsTab } from './PrsTab'
-import { SoonTab } from './SoonTab'
 import { SummaryTab } from './SummaryTab'
 import { TasksTab } from './TasksTab'
 import { Terminal } from './Terminal'
@@ -144,7 +143,6 @@ export function MainPanel({ node }: { node: Node }) {
         {activeTab === 'changes' && <ChangesTab node={node} />}
         {activeTab === 'tasks' && <TasksTab node={node} />}
         {activeTab === 'prs' && <PrsTab node={node} />}
-        {activeTab === 'soon' && <SoonTab node={node} />}
 
         {/*
           Terminals stay mounted for the active project and are merely hidden

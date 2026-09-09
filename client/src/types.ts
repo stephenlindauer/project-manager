@@ -138,31 +138,4 @@ export type Summary = {
   pr?: PullRequest | null
 }
 
-export type TabId = 'summary' | 'claude' | 'terminal' | 'changes' | 'tasks' | 'prs' | 'soon'
-
-/** A Memento todo, as the Soon tab shows it. Horizon is a soft bucket; `due` is the deadline. */
-export type TodoHorizon = 'now' | 'soon' | 'someday'
-export type Todo = {
-  id: string
-  text: string
-  horizon: TodoHorizon
-  due: string | null
-  /** Days since last touched. */
-  age: number
-  state: 'open' | 'fading' | 'faded' | 'closed'
-  urgency: 'overdue' | 'today' | 'upcoming' | null
-  /** Days until it fades, for undated open todos. */
-  left: number | null
-  closed: string | boolean | null
-  source: string | null
-  entities: string[]
-}
-export type Todos = {
-  available: boolean
-  entity: string | null
-  error?: string | null
-  open: Todo[]
-  fading: Todo[]
-  faded: Todo[]
-  closed: Todo[]
-}
+export type TabId = 'summary' | 'claude' | 'terminal' | 'changes' | 'tasks' | 'prs'

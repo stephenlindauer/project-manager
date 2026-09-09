@@ -76,17 +76,6 @@ export const config = {
       path.join(root, '.pm-hook-token')),
   },
 
-  /**
-   * The Memento memory server, which owns the todos shown in the Soon tab. Read
-   * from the `mem` CLI's own config so the two cannot disagree about where the
-   * server is; absent means the tab says so and nothing else changes.
-   */
-  memento: {
-    configFile: str(process.env.PM_MEMENTO_CONFIG, file.memento?.configFile,
-      path.join(process.env.MEMENTO_CONFIG || path.join(home, '.memento'), 'config.json')),
-    timeoutMs: Number(process.env.PM_MEMENTO_TIMEOUT || file.memento?.timeoutMs || 8000),
-  },
-
   /** Command launched in the "Claude" tmux tab. */
   claudeCommand: process.env.PM_CLAUDE_COMMAND || file.claudeCommand || 'claude',
   /** Directory name (sibling to a repo) that holds its worktrees. */
