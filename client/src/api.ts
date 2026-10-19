@@ -1,4 +1,4 @@
-import type { Changes, Node, Project, PrsView, Runner, Script, Summary } from './types'
+import type { Changes, CleanupResult, CleanupScan, Node, Project, PrsView, Runner, Script, Summary } from './types'
 
 /** Notified whenever a request 401s, so the app can drop back to the login gate. */
 let onUnauthorized: (() => void) | null = null
@@ -74,6 +74,12 @@ export const api = {
   /** 409 with `{ needsForce: true, files }` when the tree is dirty; retry with `force` to discard them. */
   removeWorktree: (id: string, force = false) =>
     json<{ ok: boolean }>(`/api/nodes/${id}/worktree?force=${force ? 1 : 0}`, { method: 'DELETE' }),
+
+  /** Fetch every repo with linked worktrees and classify them. Takes a few seconds. */
+  cleanupScan: () => post<CleanupScan>('/api/cleanup/scan'),
+  /** Remove these worktrees; the server re-checks each and keeps any that stopped qualifying. */
+  cleanupPurge: (nodeIds: string[], deleteBranches: boolean) =>
+    post<{ results: CleanupResult[] }>('/api/cleanup/purge', { nodeIds, deleteBranches }),
 
   /** Mark a node's Claude badge as seen: the label stays, the shouting stops. */
   ackClaude: (id: string) =>

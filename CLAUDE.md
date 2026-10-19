@@ -43,6 +43,18 @@ only: Codex has no hook events, so a Codex session shows no badge. Its
 submit and `store.createWorktreeInBackground` reports through toasts; it does
 *not* select the new node, so you can keep working elsewhere.
 
+**Worktree cleanup** (`⌫` in the sidebar header, `server/cleanup.js`). Opening it
+runs `git fetch --prune origin` on every repo with linked worktrees, then
+classifies each one: `merged` (no commits the default branch lacks, or all of them
+landed by rebase or squash — the squash probe is a dangling `commit-tree` +
+`git cherry`), `missing` (directory gone; purge prunes it), `empty` (the branch
+reflog never recorded anything past "Created from" — a brand-new worktree looks
+exactly like a merged one otherwise), or `open`. Only `merged`/`missing` with no
+*holds* (dirty, locked, open PR, Claude working/waiting, task running) are
+purgeable; purge re-checks each on the server and removes through the same
+`dropWorktree` as the ✕ button, plus `git branch -D` if asked. Stale ones are
+listed, never purged. A merged tree with a tmux session starts unticked.
+
 **Queuing a prompt into Claude.** `store.startInClaude(nodeId, text)` stores text in
 `pendingInput` and switches to that node's Claude tab; `Terminal.tsx` types it into the
 session once its socket is open and never presses Enter — the person submits. Nothing

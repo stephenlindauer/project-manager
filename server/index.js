@@ -18,6 +18,7 @@ import * as Auth from './auth.js'
 import * as Notify from './notify.js'
 import * as Ship from './ship.js'
 import * as Trash from './trash.js'
+import * as Cleanup from './cleanup.js'
 import { run } from './exec.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -271,22 +272,144 @@ app.delete('/api/nodes/:id/worktree', wrap(async (req, res) => {
     }
   }
 
-  Tasks.stopNode(req.params.id)
-  Notify.forget(req.params.id)
-  await T.killNode(req.params.id)
+  const error = await dropWorktree(req.params.id, n, { force })
+  // Anything git still refuses (a lock, a tree we could not move) gets the
+  // same offer; a failure *with* --force is final.
+  if (error) return res.status(force ? 400 : 409).json({ error, needsForce: !force, files: [] })
+  res.json({ ok: true })
+}))
+
+/**
+ * Stop everything running in a worktree, remove it, and drop it from the
+ * index. Callers own the dirty check. Returns an error string, or null.
+ * Answers without a rescan: one takes ~17s here, and clients get the new tree
+ * over SSE from `forgetWorktree` instead.
+ */
+async function dropWorktree(nodeId, n, { force = false } = {}) {
+  Tasks.stopNode(nodeId)
+  Notify.forget(nodeId)
+  await T.killNode(nodeId)
   const result = await G.removeWorktree(n.project.path, n.cwd, { force })
   if (result.failed) {
     const error = result.stderr.trim() || result.stdout.trim() || 'git worktree remove failed'
     console.error(`[worktree] remove failed ${n.cwd}: ${error}`)
-    // Anything git still refuses (a lock, a tree we could not move) gets the
-    // same offer; a failure *with* --force is final.
-    return res.status(force ? 400 : 409).json({ error, needsForce: !force, files: [] })
+    return error
   }
   console.log(`[worktree] removed ${n.cwd}${result.trashed ? ' (files deleting in the background)' : ''}`)
-  // Answer now. A full rescan takes ~17s here; clients get the new tree over
-  // SSE from `forgetWorktree` instead.
-  store.forgetWorktree(req.params.id)
-  res.json({ ok: true })
+  store.forgetWorktree(nodeId)
+  return null
+}
+
+// ------------------------------------------------------------- cleanup
+
+/** Node ids with any `pm-*` tmux session, live in this server or not (sessions outlive restarts). */
+async function nodesWithSessions() {
+  const ids = new Set(T.sessionSummaries().filter((s) => s.alive).map((s) => s.nodeId))
+  const { stdout } = await run('tmux', ['list-sessions', '-F', '#{session_name}'])
+  for (const name of stdout.split('\n')) {
+    const m = name.match(/^pm-[a-z]+-(.+)$/)
+    if (m) ids.add(m[1])
+  }
+  return ids
+}
+
+/**
+ * Verdict for every linked worktree in `projects`, or only for `onlyIds`.
+ * Live state the git facts cannot see — an open PR, a busy Claude, a running
+ * task — becomes a hold, so a merged tree that is still in use is never purged.
+ */
+async function assessWorktrees(projects, { onlyIds = null } = {}) {
+  const [sessions, defaults] = await Promise.all([
+    nodesWithSessions(),
+    Promise.all(projects.map((p) => G.defaultBranch(p.path))),
+  ])
+  const prNodes = new Set(Ship.statusList().nodes.map((r) => r.nodeId))
+  const claude = new Map(Notify.statusList().map((r) => [r.nodeId, r.state]))
+  const tasks = new Set(Tasks.allRunners().filter((r) => r.running).map((r) => r.nodeId))
+  const activity = new Map(store.nodes.map((n) => [n.id, n.activityAt]))
+
+  const targets = projects.flatMap((p, i) => p.worktrees
+    .filter((w) => !w.isMain && (!onlyIds || onlyIds.has(w.id)))
+    .map((w) => ({ project: p, worktree: w, defaultBranch: defaults[i] })))
+
+  return Cleanup.pool(targets, 6, async ({ project, worktree: w, defaultBranch }) => {
+    const facts = await Cleanup.gather(project.path, w, defaultBranch)
+    const busy = claude.get(w.id)
+    const { verdict, reason, holds } = Cleanup.classify({
+      ...facts,
+      openPr: prNodes.has(w.id),
+      claudeBusy: busy === 'working' || busy === 'waiting' ? busy : null,
+      taskRunning: tasks.has(w.id),
+    })
+    return {
+      nodeId: w.id, projectId: project.id, project: project.name, repoPath: project.path,
+      branch: w.branch, path: w.path, verdict, reason, holds,
+      upstreamGone: facts.upstreamGone, session: sessions.has(w.id),
+      activityAt: activity.get(w.id) ?? null,
+    }
+  })
+}
+
+/**
+ * Fetch every repo that has linked worktrees, then classify them all. POST
+ * because the fetch moves remote-tracking refs. A failed fetch is reported,
+ * not fatal: the verdicts fall back to whatever origin was last seen.
+ */
+app.post('/api/cleanup/scan', wrap(async (_req, res) => {
+  const projects = store.projects.filter((p) => p.isGit && p.worktrees.some((w) => !w.isMain))
+  const fetched = await Cleanup.pool(projects, 4, (p) => Cleanup.fetchOrigin(p.path))
+  const fetchErrors = projects
+    .map((p, i) => (fetched[i].ok ? null : { project: p.name, error: fetched[i].error }))
+    .filter(Boolean)
+  const items = await assessWorktrees(projects)
+  res.json({ items: items.map(({ repoPath: _r, ...it }) => it), fetchErrors, staleDays: Cleanup.STALE_DAYS })
+}))
+
+/**
+ * Remove the named worktrees — only those that still classify as merged (or
+ * missing) with no holds when re-checked here, so a commit made since the
+ * scan wins. Branches go too when `deleteBranches`: their work is on the base.
+ */
+app.post('/api/cleanup/purge', wrap(async (req, res) => {
+  const ids = new Set(Array.isArray(req.body?.nodeIds) ? req.body.nodeIds.map(String) : [])
+  const deleteBranches = req.body?.deleteBranches !== false
+  if (!ids.size) return res.status(400).json({ error: 'nodeIds required' })
+
+  const projects = store.projects.filter((p) => p.worktrees.some((w) => ids.has(w.id)))
+  const items = await assessWorktrees(projects, { onlyIds: ids })
+  const results = []
+  const pruned = new Set()
+  // One at a time: removals in the same repo all take git's worktree lock.
+  for (const it of items) {
+    const out = { nodeId: it.nodeId, project: it.project, branch: it.branch, ok: false, error: null, branchDeleted: false }
+    results.push(out)
+    if ((it.verdict !== 'merged' && it.verdict !== 'missing') || it.holds.length) {
+      out.error = it.holds.length ? `kept: ${it.holds.join(', ')}` : `kept: ${it.reason}`
+      continue
+    }
+    if (it.verdict === 'missing') {
+      if (!pruned.has(it.repoPath)) { pruned.add(it.repoPath); await Cleanup.prune(it.repoPath) }
+      Notify.forget(it.nodeId)
+      await T.killNode(it.nodeId)
+      store.forgetWorktree(it.nodeId)
+      out.ok = true
+      continue
+    }
+    const hit = store.find(it.nodeId)
+    if (!hit?.worktree) { out.error = 'no longer in the index'; continue }
+    out.error = await dropWorktree(it.nodeId, { ...hit, cwd: hit.worktree.path })
+    out.ok = !out.error
+    if (out.ok && deleteBranches && it.branch) {
+      const r = await Cleanup.deleteBranch(it.repoPath, it.branch)
+      out.branchDeleted = !r.failed
+      if (r.failed) console.error(`[cleanup] kept branch ${it.branch}: ${r.stderr.trim()}`)
+    }
+  }
+  for (const id of ids) {
+    if (!items.some((it) => it.nodeId === id)) results.push({ nodeId: id, ok: false, error: 'unknown worktree' })
+  }
+  console.log(`[cleanup] removed ${results.filter((r) => r.ok).length}/${ids.size} worktrees`)
+  res.json({ results })
 }))
 
 // ------------------------------------------------------------- changes

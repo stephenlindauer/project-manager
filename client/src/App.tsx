@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { CleanupDialog } from './components/CleanupDialog'
 import { Login } from './components/Login'
 import { MainPanel } from './components/MainPanel'
 import { NewBranchDialog } from './components/NewBranchDialog'
@@ -37,6 +38,7 @@ export default function App() {
       )}
       <Palette />
       <NewBranchDialog />
+      <CleanupDialog />
       <Toasts />
     </div>
   )

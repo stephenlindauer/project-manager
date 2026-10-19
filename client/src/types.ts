@@ -261,3 +261,39 @@ export type Agent = 'claude' | 'codex'
 export type SessionKind = Agent | 'shell'
 
 export type TabId = 'summary' | 'claude' | 'terminal' | 'changes' | 'tasks' | 'prs'
+
+/** See server/cleanup.js: `merged`/`missing` are purgeable, `empty`/`open` only ever listed. */
+export type CleanupVerdict = 'merged' | 'missing' | 'empty' | 'open'
+
+export type CleanupItem = {
+  nodeId: string
+  projectId: string
+  project: string
+  branch: string | null
+  path: string
+  verdict: CleanupVerdict
+  /** "squash-merged into origin/main", "3 commits not on main", … */
+  reason: string
+  /** Live state that keeps a merged tree from being purged: dirty files, an open PR, a busy Claude. */
+  holds: string[]
+  /** The branch's upstream was deleted on the remote — usually a merged or closed PR. */
+  upstreamGone: boolean
+  /** A pm-* tmux session exists for it; purging ends it. */
+  session: boolean
+  activityAt: number | null
+}
+
+export type CleanupScan = {
+  items: CleanupItem[]
+  fetchErrors: { project: string; error: string }[]
+  staleDays: number
+}
+
+export type CleanupResult = {
+  nodeId: string
+  project?: string
+  branch?: string | null
+  ok: boolean
+  error: string | null
+  branchDeleted?: boolean
+}

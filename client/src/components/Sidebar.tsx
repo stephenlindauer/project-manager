@@ -148,6 +148,11 @@ export function Sidebar() {
             : 'Show only worktrees with a Claude session, a running task, a PR waiting on you, or the selection'}
         >{activeOnly ? `◉ ${hiddenCount}` : '◎'}</button>
         <button
+          onClick={() => useStore.getState().setCleanupOpen(true)}
+          className="rounded border border-line px-1.5 py-0.5 text-[10px] text-muted hover:border-accent hover:text-ink"
+          title="Clean up worktrees: remove merged ones, list stale ones"
+        >⌫</button>
+        <button
           onClick={() => rescan()}
           className="rounded border border-line px-1.5 py-0.5 text-[10px] text-muted hover:border-accent hover:text-ink"
           title="Rescan ~/Projects"

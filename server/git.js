@@ -102,7 +102,7 @@ export async function worktrees(cwd) {
   for (const line of stdout.split('\n')) {
     if (line.startsWith('worktree ')) {
       if (cur) list.push(cur)
-      cur = { path: line.slice(9), branch: null, head: null, bare: false, detached: false, locked: false }
+      cur = { path: line.slice(9), branch: null, head: null, bare: false, detached: false, locked: false, prunable: false }
     } else if (!cur) {
       continue
     } else if (line.startsWith('HEAD ')) {
@@ -115,6 +115,9 @@ export async function worktrees(cwd) {
       cur.detached = true
     } else if (line.startsWith('locked')) {
       cur.locked = true
+    } else if (line.startsWith('prunable')) {
+      // Registered, but its directory is gone.
+      cur.prunable = true
     }
   }
   if (cur) list.push(cur)

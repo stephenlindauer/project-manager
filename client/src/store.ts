@@ -46,6 +46,8 @@ type State = {
   /** A timed peek from keyboard navigation. Hover peeking is local to Sidebar. */
   navPeek: boolean
   newBranchFor: string | null
+  /** The worktree cleanup dialog is open. */
+  cleanupOpen: boolean
   /**
    * Text waiting to be typed into a node's Claude session the moment its
    * socket is open (`startInClaude`). Typed, never submitted: the person reads
@@ -84,6 +86,7 @@ type State = {
   createWorktreeInBackground: (projectId: string, spec: { branch: string; base?: string }) => void
   peekNav: () => void
   setNewBranchFor: (projectId: string | null) => void
+  setCleanupOpen: (open: boolean) => void
   /** Queue text for a node's Claude tab and switch to it. */
   startInClaude: (nodeId: string, text: string) => void
   takePendingInput: (nodeId: string) => string | null
@@ -205,6 +208,7 @@ export const useStore = create<State>((set, get) => ({
   shipStripFolded: localStorage.getItem('pm:shipStripFolded') === '1',
   navPeek: false,
   newBranchFor: null,
+  cleanupOpen: false,
   pendingInput: {},
   loading: true,
   needsLogin: null,
@@ -400,6 +404,7 @@ export const useStore = create<State>((set, get) => ({
   },
 
   setNewBranchFor: (newBranchFor) => set({ newBranchFor }),
+  setCleanupOpen: (cleanupOpen) => set({ cleanupOpen }),
 
   startInClaude: (nodeId, text) => {
     set({ pendingInput: { ...get().pendingInput, [nodeId]: text } })
