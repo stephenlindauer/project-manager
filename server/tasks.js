@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import pty from 'node-pty'
+import { childEnv } from './exec.js'
 
 const LOG_BYTES = 256 * 1024
 const SHELL = process.env.SHELL || '/bin/zsh'
@@ -45,7 +46,7 @@ class Runner extends EventEmitter {
         cols: 160,
         rows: 40,
         cwd: this.cwd,
-        env: { ...process.env, TERM: 'xterm-256color', FORCE_COLOR: '1' },
+        env: childEnv({ TERM: 'xterm-256color', FORCE_COLOR: '1' }),
       })
     } catch (err) {
       // Reported into the log rather than thrown; this runs inside a request

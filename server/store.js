@@ -55,6 +55,24 @@ class Store extends EventEmitter {
     return null
   }
 
+  /**
+   * Drop one linked worktree from the index right away and tell clients.
+   * Used after `git worktree remove`: the caller knows exactly what changed,
+   * and a full `rescan()` costs ~17s on a machine with a handful of 500k-file
+   * worktrees. The periodic rescan reconciles anything else. Never drops a
+   * main worktree — that is the project itself.
+   */
+  forgetWorktree(nodeId) {
+    for (const p of this.projects) {
+      const i = p.worktrees.findIndex((w) => w.id === nodeId && !w.isMain)
+      if (i === -1) continue
+      p.worktrees.splice(i, 1)
+      this.emit('projects', this.projects)
+      return true
+    }
+    return false
+  }
+
   /** Full rescan of the filesystem, then a git refresh of everything found. */
   async rescan() {
     if (this.scanning) return this.projects
@@ -97,6 +115,12 @@ class Store extends EventEmitter {
     ])
     worktree.status = status
     worktree.lastCommit = lastCommit
+    // The branch can change under us (a checkout in the terminal, a stack
+    // switch), so it is re-derived here rather than trusted from the scan.
+    if (status) {
+      worktree.branch = status.branch
+      worktree.name = status.branch ?? lastCommit?.short ?? worktree.name
+    }
 
     const committed = lastCommit?.committedAt ? Date.parse(lastCommit.committedAt) : 0
     const edited = await G.newestFileMtime(worktree.path, status?.files ?? [])

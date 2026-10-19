@@ -1,16 +1,22 @@
 #!/usr/bin/env node
 /**
- * Claude Code Stop / Notification hook → Project Manager.
+ * Claude Code hook → Project Manager.
  *
- * Claude Code pipes the hook payload in on stdin; we forward the bits that
- * identify the session to the local API, which turns it into a sidebar
- * indicator, a toast, and a sound. Installed into ~/.claude/settings.json by
- * `npm run install-hooks`.
+ * Claude Code pipes the hook payload in on stdin; we forward the event name,
+ * the bits that identify the session, and a trimmed slice of what Claude is
+ * doing to the local API. Stop and Notification become a sidebar badge, a
+ * toast, and a sound; UserPromptSubmit, PreToolUse and PostToolUse drive the
+ * live "working · <phase>" badge; SessionEnd retires it. Installed into
+ * ~/.claude/settings.json by `npm run install-hooks`.
  *
  * Rules of engagement, all of them the same rule: never get in the user's way.
  * The hook is configured `async`, so Claude does not wait on it, and *every*
  * failure path here exits 0 with no output. A missing server, a stale token, no
  * network — none of that is a reason to put an error in someone's session.
+ *
+ * Debugging: if `.pm-hook-dump.jsonl` exists in the repo root, every raw payload
+ * is appended to it (gitignored). Delete the file to stop. This is the only way
+ * to see what a given Claude Code version actually sends.
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -55,9 +61,41 @@ function tmuxSession() {
   } catch { return null }
 }
 
+const str = (v, max) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null)
+
+/**
+ * The part of `tool_input` that says what the tool is *for*, per tool. Whole
+ * inputs can be large (a Write carries the file), and the server only needs a
+ * one-line hint to classify the phase and label the badge.
+ */
+function toolHint(name, input) {
+  if (!input || typeof input !== 'object') return null
+  switch (name) {
+    case 'Bash': return str(input.command, 200)
+    case 'Skill': return str(input.skill, 80)
+    case 'Agent': case 'Task': return str(input.description, 120) ?? str(input.subagent_type, 80)
+    case 'Edit': case 'Write': case 'MultiEdit': case 'NotebookEdit': case 'Read':
+      return str(input.file_path ?? input.notebook_path, 200)
+    case 'Grep': return str(input.pattern, 120)
+    case 'Glob': return str(input.pattern, 120)
+    case 'WebFetch': return str(input.url, 200)
+    case 'WebSearch': return str(input.query, 120)
+    default: return null
+  }
+}
+
+function dump(raw) {
+  const file = path.join(root, '.pm-hook-dump.jsonl')
+  try {
+    if (!fs.existsSync(file)) return
+    fs.appendFileSync(file, `${JSON.stringify({ at: new Date().toISOString(), raw })}\n`)
+  } catch { /* debugging aid only */ }
+}
+
 async function main() {
   let raw = ''
   for await (const chunk of process.stdin) raw += chunk
+  dump(raw)
 
   let payload = {}
   try { payload = JSON.parse(raw) } catch { /* fall through with cwd only */ }
@@ -70,7 +108,19 @@ async function main() {
     event: payload.hook_event_name ?? 'Stop',
     cwd: payload.cwd || process.cwd(),
     session: tmuxSession(),
-    message: payload.message ?? null,
+    sessionId: str(payload.session_id, 80),
+    message: str(payload.message, 240),
+    // Notification: what kind of prompt is up (permission_prompt, idle_prompt…).
+    notificationType: str(payload.notification_type, 60),
+    // PreToolUse / PostToolUse: what is being run, trimmed to a hint.
+    tool: str(payload.tool_name, 80),
+    toolHint: toolHint(payload.tool_name, payload.tool_input),
+    // UserPromptSubmit: what you asked for. Field name has moved between
+    // versions, so accept both.
+    prompt: str(payload.text ?? payload.prompt, 200),
+    // Stop: Claude's closing words, for the "ready" badge's tooltip.
+    lastMessage: str(payload.last_assistant_message, 400),
+    transcriptPath: str(payload.transcript_path, 400),
   })
 
   // Self-signed certs are the norm for the https option here, and this request

@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { git } from './exec.js'
+import * as Trash from './trash.js'
 
 /**
  * Field separator for --format strings, written as the git escape `%x1f`.
@@ -156,6 +157,28 @@ export async function remoteUrl(cwd) {
 }
 
 /**
+ * `owner/repo` from a GitHub remote URL, or null for anything else. Accepts the
+ * ssh, https, ssh:// and git:// spellings, with or without `.git`.
+ */
+export function parseGitHubRepo(url) {
+  if (!url) return null
+  const m = String(url).trim().match(/github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i)
+  return m ? `${m[1]}/${m[2]}` : null
+}
+
+/**
+ * The GitHub repo this checkout's PRs live in. `origin` decides when it exists;
+ * `upstream` is the fallback only when there is no origin at all, which is the
+ * shape of a local-only fork of a public repo.
+ */
+export async function githubRepo(cwd) {
+  const origin = await remoteUrl(cwd)
+  if (origin) return parseGitHubRepo(origin)
+  const upstream = await git(cwd, ['remote', 'get-url', 'upstream'])
+  return upstream.failed ? null : parseGitHubRepo(upstream.stdout.trim())
+}
+
+/**
  * Files changed relative to HEAD, split by staged / unstaged / untracked.
  * Used by the Changes tab.
  */
@@ -227,12 +250,68 @@ export async function addWorktree(repoPath, { branch, base, dir }) {
   return git(repoPath, args, { timeout: 120_000 })
 }
 
+/**
+ * Remove a worktree without waiting for its files to go.
+ *
+ * `git worktree remove` deletes the tree itself, and a JS worktree with
+ * node_modules holds hundreds of thousands of files — minutes of unlinking,
+ * which the default 20s exec timeout used to cut short: git was killed
+ * mid-delete, the half-emptied tree stayed registered, and the UI got an
+ * empty error. So: rename the tree into the repo's `.worktrees/.trash/`
+ * (instant on one volume), unregister it by its *old* path — once the path is
+ * gone git skips both the dirty check and the delete — and let a detached
+ * `rm -rf` reclaim the space. Callers own the dirty check (`status`), since
+ * git never sees the files. A locked worktree still needs `force` (git's
+ * `-f -f`). If the rename is impossible, git does the whole job in place
+ * with a budget sized for a large tree.
+ */
 export async function removeWorktree(repoPath, dir, { force = false } = {}) {
-  const args = ['worktree', 'remove']
-  if (force) args.push('--force')
-  args.push(dir)
-  return git(repoPath, args)
+  const { dest } = await Trash.stash(repoPath, dir)
+  if (!dest) {
+    const args = ['worktree', 'remove', ...(force ? ['--force'] : []), dir]
+    return git(repoPath, args, { timeout: 10 * 60_000 })
+  }
+  const result = await git(repoPath, ['worktree', 'remove', ...(force ? ['--force', '--force'] : []), dir])
+  if (result.failed) {
+    // Put the tree back where git still thinks it is, so nothing is stranded.
+    await fs.rename(dest, dir).catch(() => {})
+    return result
+  }
+  Trash.discard(dest)
+  return { ...result, trashed: dest }
 }
 
 export const fetchAll = (cwd) =>
   git(cwd, ['fetch', '--all', '--prune'], { timeout: 60_000 })
+
+/** Local branch names only (no remotes). Cheap; used to tell "have it" from "would fetch it". */
+export async function localBranchNames(cwd) {
+  const { stdout, failed } = await git(cwd, ['for-each-ref', '--format=%(refname:short)', 'refs/heads'])
+  return failed ? [] : stdout.split('\n').filter(Boolean)
+}
+
+/**
+ * `git checkout <ref>`. Plain checkout on purpose: git's DWIM turns a
+ * remote-only branch name into a local tracking branch, and refuses (rather
+ * than clobbers) when the ref is checked out in another worktree or the
+ * switch would overwrite local edits. Callers surface stderr as the answer.
+ */
+export const checkout = (cwd, ref) => git(cwd, ['checkout', ref], { timeout: 60_000 })
+
+/**
+ * Commits on HEAD that are not on `base`, bottom-up, each with the PR number
+ * named by a `Pull Request: <url>` line in its message. That line is how
+ * git-grok marks a commit it has minted as a PR; a commit without one has not
+ * been pushed yet. It is matched by hand because git's own trailer parser
+ * rejects the key (trailer tokens cannot contain a space).
+ */
+export async function stackCommits(cwd, base) {
+  const fmt = ['%H', '%h', '%s', '%b'].join(FSEP)
+  const { stdout, failed } = await git(cwd, ['log', '--reverse', `--format=${fmt}%x1e`, `${base}..HEAD`])
+  if (failed) return null
+  return stdout.split('\x1e').map((s) => s.replace(/^\n/, '')).filter(Boolean).map((rec) => {
+    const [sha, short, subject, body = ''] = rec.split(SEP)
+    const m = body.match(/^Pull[ -]?Request:\s*\S*?\/pull\/(\d+)/im)
+    return { sha, short, subject, pr: m ? Number(m[1]) : null }
+  })
+}

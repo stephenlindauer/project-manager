@@ -76,8 +76,20 @@ export const config = {
       path.join(root, '.pm-hook-token')),
   },
 
-  /** Command launched in the "Claude" tmux tab. */
+  /**
+   * GitHub, for the sidebar's ship verdicts (server/ship.js): one GraphQL
+   * search per tick for your open PRs, a single rate-limit point apiece.
+   */
+  gh: {
+    pollMs: Number(process.env.PM_GH_POLL_MS || file.gh?.pollMs || 120_000),
+    ship: bool(process.env.PM_SHIP, file.gh?.ship, true),
+    /** Dev aid: a JSON file standing in for the GraphQL response, re-read every tick. */
+    shipFixture: str(process.env.PM_SHIP_FIXTURE, file.gh?.shipFixture, null),
+  },
+
+  /** Commands launched in the agent tab, one per agent (Claude ⇄ Codex toggle). */
   claudeCommand: process.env.PM_CLAUDE_COMMAND || file.claudeCommand || 'claude',
+  codexCommand: process.env.PM_CODEX_COMMAND || file.codexCommand || 'codex',
   /** Directory name (sibling to a repo) that holds its worktrees. */
   worktreeDirName: '.worktrees',
   /** Never descend into these. */

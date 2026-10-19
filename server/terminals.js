@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import os from 'node:os'
 import pty from 'node-pty'
-import { run } from './exec.js'
+import { childEnv, run } from './exec.js'
 import { config } from './config.js'
 
 const SCROLLBACK_BYTES = 512 * 1024
@@ -34,6 +34,19 @@ export async function detectTmux() {
 export const backend = () => (tmuxAvailable ? 'tmux' : 'pty')
 
 const sessionName = (nodeId, kind) => `pm-${kind}-${nodeId}`
+
+/**
+ * What a session of each kind runs when it is new. `shell` is a login shell;
+ * the agent kinds launch their CLI in one. Claude and Codex are separate
+ * kinds — separate tmux sessions — so switching agents in the UI never kills
+ * the other one's context.
+ */
+const LAUNCH = {
+  claude: () => config.claudeCommand,
+  codex: () => config.codexCommand,
+  shell: () => null,
+}
+export const isKind = (k) => typeof k === 'string' && Object.hasOwn(LAUNCH, k)
 
 class Session extends EventEmitter {
   constructor({ key, nodeId, kind, cwd }) {
@@ -82,7 +95,8 @@ class Session extends EventEmitter {
    */
   async ensureTmuxSession() {
     const name = sessionName(this.nodeId, this.kind)
-    const launch = this.kind === 'claude' ? [config.claudeCommand] : []
+    const cmd = LAUNCH[this.kind]?.()
+    const launch = cmd ? [cmd] : []
     // Create at the client's real size: a session born at tmux's 80x24 default
     // paints its first frame at the wrong width before the resize lands.
     await run('tmux', [
@@ -118,7 +132,7 @@ class Session extends EventEmitter {
    */
   async spawn() {
     if (this.proc) return this.proc
-    const env = { ...process.env, TERM: 'xterm-256color', PM_PROJECT_DIR: this.cwd }
+    const env = childEnv({ TERM: 'xterm-256color', PM_PROJECT_DIR: this.cwd })
     const opts = {
       name: 'xterm-256color', cols: this.cols, rows: this.rows, cwd: this.cwd, env,
     }
@@ -134,7 +148,8 @@ class Session extends EventEmitter {
         // orphaned by a previous server instance (node --watch restarts).
         this.proc = pty.spawn('tmux', ['-u', 'attach-session', '-d', '-t', name], opts)
       } else {
-        const args = this.kind === 'claude' ? ['-lic', config.claudeCommand] : ['-l']
+        const cmd = LAUNCH[this.kind]?.()
+        const args = cmd ? ['-lic', cmd] : ['-l']
         this.proc = pty.spawn(SHELL, args, opts)
       }
     } catch (err) {

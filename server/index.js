@@ -16,6 +16,8 @@ import * as Tasks from './tasks.js'
 import * as GH from './gh.js'
 import * as Auth from './auth.js'
 import * as Notify from './notify.js'
+import * as Ship from './ship.js'
+import * as Trash from './trash.js'
 import { run } from './exec.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -75,7 +77,7 @@ app.post('/api/logout', (req, res) => {
 // ------------------------------------------------------- claude code hooks
 
 /**
- * Callback for Claude Code's Stop / Notification hooks — see
+ * Callback for Claude Code's hooks — see
  * `scripts/claude-notify-hook.js`, installed into ~/.claude/settings.json by
  * `npm run install-hooks`.
  *
@@ -98,20 +100,52 @@ app.post('/api/claude-hook', (req, res) => {
     return res.status(401).json({ error: 'bad hook token' })
   }
 
-  const { event, cwd, session, message } = req.body ?? {}
-  // `Notification` means Claude is blocked on you; `Stop` means it finished.
-  const state = event === 'Notification' ? 'waiting' : 'done'
-  if (!Notify.isState(state)) return res.status(400).json({ error: 'unknown event' })
-
+  const body = req.body ?? {}
+  const { event, cwd, session } = body
+  const str = (v, max) => (typeof v === 'string' ? v.slice(0, max) : null)
   const nodeId = hookNodeId(session, cwd)
   if (!nodeId) return res.json({ ok: true, delivered: false, reason: 'no matching project' })
+  const watched = () => T.isWatched(nodeId, 'claude')
 
-  res.json(Notify.raise({
-    nodeId,
-    state,
-    message: typeof message === 'string' ? message.slice(0, 240) : null,
-    watched: T.isWatched(nodeId, 'claude'),
-  }))
+  switch (event) {
+    // Claude picked up a prompt: a new task starts, and it is working.
+    case 'UserPromptSubmit':
+      return res.json({ ok: true, working: true, changed: Notify.working(nodeId, { prompt: str(body.prompt, 200) }) })
+    // About to run / just ran a tool: still working, and the tool names the
+    // phase. AskUserQuestion is the exception — it has no hook of its own, so
+    // its PreToolUse is the moment Claude starts waiting on you, and its
+    // PostToolUse the moment you answered.
+    case 'PreToolUse':
+      if (body.tool === 'AskUserQuestion') {
+        return res.json(Notify.settle({
+          nodeId, state: 'waiting', message: str(body.toolHint, 240) ?? 'Claude has a question', watched: watched(),
+        }))
+      }
+      // falls through
+    case 'PostToolUse':
+      return res.json({
+        ok: true, working: true,
+        changed: Notify.working(nodeId, { tool: str(body.tool, 80), toolHint: str(body.toolHint, 200) }),
+      })
+    case 'SessionEnd':
+      return res.json({ ok: true, working: false, changed: Notify.forget(nodeId) })
+    // A Notification is Claude blocked on you — except `idle_prompt`, which
+    // only means the turn ended a minute ago and you have not typed since.
+    // That is "ready", the same as Stop, not a block.
+    case 'Notification': {
+      const idle = body.notificationType === 'idle_prompt'
+      return res.json(Notify.settle({
+        nodeId, state: idle ? 'done' : 'waiting', message: str(body.message, 240), watched: watched(),
+      }))
+    }
+    // Stop: the turn is over. Claude's closing words become the tooltip.
+    case 'Stop':
+      return res.json(Notify.settle({
+        nodeId, state: 'done', message: str(body.message, 240), detail: str(body.lastMessage, 400), watched: watched(),
+      }))
+    default:
+      return res.status(400).json({ error: 'unknown event' })
+  }
 })
 
 /**
@@ -213,19 +247,45 @@ app.post('/api/projects/:id/worktrees', wrap(async (req, res) => {
   }
   await store.rescan()
   const created = store.nodes.find((x) => x.cwd === dir)
-  res.json({ ok: true, dir, node: created })
+  res.json({ ok: true, dir, branch, node: created })
 }))
 
 app.delete('/api/nodes/:id/worktree', wrap(async (req, res) => {
   const n = node(req, res); if (!n) return
   if (n.worktree.isMain) return res.status(400).json({ error: 'cannot remove the main worktree' })
 
+  const force = req.query.force === '1'
+  // Refuse a dirty tree *before* touching the sessions: killing the Claude
+  // session first meant a failed removal still cost the person their context.
+  // This is also the *only* dirty check — `removeWorktree` moves the tree
+  // away before git looks at it. 409 + `needsForce` is the client's cue to
+  // offer `--force`; `files` is what that would lose.
+  if (!force) {
+    const s = await G.status(n.cwd)
+    if (s && s.staged + s.unstaged + s.untracked + s.conflicted > 0) {
+      return res.status(409).json({
+        error: `worktree has uncommitted changes (${s.files.length} file${s.files.length === 1 ? '' : 's'})`,
+        needsForce: true,
+        files: s.files,
+      })
+    }
+  }
+
   Tasks.stopNode(req.params.id)
-  Notify.clear(req.params.id)
+  Notify.forget(req.params.id)
   await T.killNode(req.params.id)
-  const result = await G.removeWorktree(n.project.path, n.cwd, { force: req.query.force === '1' })
-  if (result.failed) return res.status(400).json({ error: result.stderr.trim() })
-  await store.rescan()
+  const result = await G.removeWorktree(n.project.path, n.cwd, { force })
+  if (result.failed) {
+    const error = result.stderr.trim() || result.stdout.trim() || 'git worktree remove failed'
+    console.error(`[worktree] remove failed ${n.cwd}: ${error}`)
+    // Anything git still refuses (a lock, a tree we could not move) gets the
+    // same offer; a failure *with* --force is final.
+    return res.status(force ? 400 : 409).json({ error, needsForce: !force, files: [] })
+  }
+  console.log(`[worktree] removed ${n.cwd}${result.trashed ? ' (files deleting in the background)' : ''}`)
+  // Answer now. A full rescan takes ~17s here; clients get the new tree over
+  // SSE from `forgetWorktree` instead.
+  store.forgetWorktree(req.params.id)
   res.json({ ok: true })
 }))
 
@@ -248,12 +308,53 @@ app.get('/api/nodes/:id/diff', wrap(async (req, res) => {
 
 app.get('/api/nodes/:id/prs', wrap(async (req, res) => {
   const n = node(req, res); if (!n) return
-  res.json(await GH.pullRequests(n.cwd))
+  const [view, defaultBranch] = await Promise.all([GH.pullRequests(n.cwd), G.defaultBranch(n.cwd)])
+  const stack = view.available
+    ? await GH.stack(n.cwd, { branch: n.worktree.branch, defaultBranch, prs: view.prs }).catch((e) => {
+        console.error('[stack]', n.cwd, e)
+        return null
+      })
+    : null
+  res.json({ ...view, stack })
+}))
+
+/**
+ * Switch this worktree to another PR in its stack. If the branch is already
+ * checked out in a sibling worktree the answer is that node, not a checkout:
+ * git would refuse anyway, and the caller wants to land where the work is.
+ */
+app.post('/api/nodes/:id/stack/switch', wrap(async (req, res) => {
+  const n = node(req, res); if (!n) return
+  const head = String(req.body?.head ?? '').trim()
+  if (!/^[\w.\/-]+$/.test(head)) return res.status(400).json({ error: 'invalid branch name' })
+  if (head.startsWith('grok/')) {
+    return res.status(400).json({ error: 'git-grok stacks live on the integration branch; edit the commit with git rebase -i instead of checking out the grok branch' })
+  }
+  if (n.worktree.branch === head) return res.json({ ok: true, nodeId: req.params.id, moved: false })
+
+  const elsewhere = (await G.worktrees(n.cwd)).find((w) => w.branch === head && w.path !== n.cwd)
+  if (elsewhere) {
+    const target = store.nodes.find((x) => x.cwd === elsewhere.path)
+    return res.json({ ok: true, nodeId: target?.id ?? null, moved: false, path: elsewhere.path })
+  }
+
+  const st = await G.status(n.cwd)
+  const dirty = (st?.staged ?? 0) + (st?.unstaged ?? 0) + (st?.conflicted ?? 0)
+  if (dirty) return res.status(409).json({ error: `working tree has ${dirty} uncommitted change${dirty === 1 ? '' : 's'}; commit or stash first` })
+
+  const result = await G.checkout(n.cwd, head)
+  if (result.failed) return res.status(400).json({ error: result.stderr.trim() || result.stdout.trim() })
+  res.json({ ok: true, nodeId: req.params.id, moved: true, node: await store.refreshNode(req.params.id) })
 }))
 
 app.post('/api/nodes/:id/prs', wrap(async (req, res) => {
   const n = node(req, res); if (!n) return
   res.json(await GH.createPr(n.cwd, req.body ?? {}))
+}))
+
+/** Re-poll the ship verdicts now (throttled server-side); the PRs tab's ↻ calls it. */
+app.post('/api/ship/refresh', wrap(async (_req, res) => {
+  res.json(await Ship.refresh())
 }))
 
 // ----------------------------------------------------------------- tasks
@@ -286,9 +387,9 @@ app.post('/api/nodes/:id/tasks/stop', wrap(async (req, res) => {
 
 app.get('/api/sessions', wrap((req, res) => res.json(T.sessionSummaries())))
 
-/** Dismiss a node's Claude attention signal from the UI. */
+/** Acknowledge a node's Claude badge from the UI: keep the label, stop shouting. */
 app.delete('/api/nodes/:id/attention', wrap((req, res) => {
-  res.json({ ok: Notify.clear(req.params.id) })
+  res.json({ ok: Notify.seen(req.params.id) })
 }))
 
 app.delete('/api/nodes/:id/sessions/:kind', wrap(async (req, res) => {
@@ -334,18 +435,21 @@ app.get('/events', (req, res) => {
   const onNodes = (nodes) => send('nodes', nodes)
   const onNode = (n) => send('node', n)
   const onProjects = () => send('projects', { projects: store.projects, nodes: store.nodes })
-  const onAttention = (list) => send('attention', list)
+  const onStatus = (list) => send('claude-status', list)
   const onToast = (t) => send('claude-toast', t)
+  const onShip = (env) => send('ship-status', env)
 
   store.on('nodes', onNodes)
   store.on('node', onNode)
   store.on('projects', onProjects)
-  Notify.notifications.on('attention', onAttention)
+  Notify.notifications.on('status', onStatus)
   Notify.notifications.on('toast', onToast)
+  Ship.events.on('status', onShip)
 
   // A page that loads (or reconnects) after a signal was raised still has to
-  // learn about it — the sidebar indicator is sticky state, not just an event.
-  send('attention', Notify.attentionList())
+  // learn about it — the sidebar badge is sticky state, not just an event.
+  send('claude-status', Notify.statusList())
+  send('ship-status', Ship.statusList())
 
   const taskTick = setInterval(() => sendIfChanged('tasks', Tasks.allRunners()), 2000)
   const sessionTick = setInterval(() => sendIfChanged('sessions', T.sessionSummaries()), 2000)
@@ -355,8 +459,9 @@ app.get('/events', (req, res) => {
     store.off('nodes', onNodes)
     store.off('node', onNode)
     store.off('projects', onProjects)
-    Notify.notifications.off('attention', onAttention)
+    Notify.notifications.off('status', onStatus)
     Notify.notifications.off('toast', onToast)
+    Ship.events.off('status', onShip)
     clearInterval(taskTick)
     clearInterval(sessionTick)
     clearInterval(heartbeat)
@@ -365,7 +470,10 @@ app.get('/events', (req, res) => {
 
 // --------------------------------------------------------- static (prod)
 
-if (process.env.NODE_ENV === 'production') {
+// Our own flag, not NODE_ENV: NODE_ENV would leak into every terminal and Task
+// the app spawns (see `childEnv`), and this process is the only thing it should
+// ever describe.
+if (process.env.PM_SERVE_DIST === '1') {
   const dist = path.join(__dirname, '..', 'dist')
   app.use(express.static(dist))
   app.get('*', (req, res) => res.sendFile(path.join(dist, 'index.html')))
@@ -373,15 +481,19 @@ if (process.env.NODE_ENV === 'production') {
 
 // ------------------------------------------------------------- websocket
 
-const server = config.https.enabled
-  ? https.createServer(
-      { cert: fss.readFileSync(config.https.cert), key: fss.readFileSync(config.https.key) },
-      app,
-    )
-  : http.createServer(app)
+function createServer() {
+  const srv = config.https.enabled
+    ? https.createServer(
+        { cert: fss.readFileSync(config.https.cert), key: fss.readFileSync(config.https.key) },
+        app,
+      )
+    : http.createServer(app)
+  srv.on('upgrade', onUpgrade)
+  return srv
+}
 const wss = new WebSocketServer({ noServer: true })
 
-server.on('upgrade', (req, socket, head) => {
+function onUpgrade(req, socket, head) {
   const url = new URL(req.url, 'http://localhost')
   if (url.pathname !== '/pty') return socket.destroy()
   // The /pty socket is a full shell; gate it on the same session cookie the page
@@ -391,11 +503,13 @@ server.on('upgrade', (req, socket, head) => {
     return socket.destroy()
   }
   wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req, url))
-})
+}
+
+const server = createServer()
 
 wss.on('connection', (ws, req, url) => {
   const nodeId = url.searchParams.get('node')
-  const kind = url.searchParams.get('kind') === 'claude' ? 'claude' : 'shell'
+  const kind = T.isKind(url.searchParams.get('kind')) ? url.searchParams.get('kind') : 'shell'
   const target = url.searchParams.get('task')
 
   const hit = store.find(nodeId)
@@ -410,8 +524,8 @@ wss.on('connection', (ws, req, url) => {
   const session = T.getSession(nodeId, kind, hit.worktree.path)
 
   // Opening the Claude pane *is* the acknowledgement — there is nothing left to
-  // flag once you are looking at it.
-  if (kind === 'claude') Notify.clear(nodeId)
+  // flag once you are looking at it. The badge itself stays, as a quiet label.
+  if (kind === 'claude') Notify.seen(nodeId)
 
   // The client reports whether this pane is on screen in a foreground tab, so a
   // Stop hook that fires while you watch Claude work stays silent. Tracked per
@@ -458,7 +572,7 @@ wss.on('connection', (ws, req, url) => {
     else if (msg.type === 'restart') { session.destroy().then(() => session.spawn()) }
     else if (msg.type === 'view') {
       setViewing(Boolean(msg.active))
-      if (viewing && kind === 'claude') Notify.clear(nodeId)
+      if (viewing && kind === 'claude') Notify.seen(nodeId)
     }
   })
 
@@ -493,14 +607,30 @@ const backend = await T.detectTmux()
 const scheme = config.https.enabled ? 'https' : 'http'
 const shownHost = config.host === '0.0.0.0' ? '<this-machine-ip>' : config.host
 
+/**
+ * Bound to one specific non-loopback address (a Tailscale IP, say), the app
+ * would be unreachable from 127.0.0.1 — and the Claude hook script, the
+ * service's health check and Tailscale Serve all talk to loopback. So a
+ * specific address also gets a loopback listener on the same port.
+ */
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1'])
+const alsoLoopback = !LOOPBACK_HOSTS.has(config.host) && config.host !== '0.0.0.0' && config.host !== '::'
+if (alsoLoopback) {
+  createServer()
+    .on('error', (err) => console.warn(`[pm] loopback listener failed: ${err.message}`))
+    .listen(config.port, '127.0.0.1')
+}
+
 server.listen(config.port, config.host, async () => {
   console.log(`[pm] server     ${scheme}://${shownHost}:${config.port}`)
-  console.log(`[pm] bind       ${config.host}${config.host === '0.0.0.0' ? ' (all interfaces)' : ' (loopback only)'}`)
+  console.log(`[pm] bind       ${config.host}${config.host === '0.0.0.0' ? ' (all interfaces)'
+    : LOOPBACK_HOSTS.has(config.host) ? ' (loopback only)' : ' + 127.0.0.1'}`)
   console.log(`[pm] tls        ${config.https.enabled ? 'on' : 'off'}`)
   console.log(`[pm] auth       ${authStatusLine()}`)
   console.log(`[pm] terminals  ${backend ? 'tmux (persistent)' : 'node-pty (tmux not found)'}`)
   console.log('[pm] hooks      POST /api/claude-hook  ' +
     `(sound ${config.notify.sound ? 'on' : 'off'} — install with: npm run install-hooks)`)
+  console.log(`[pm] ship       ${config.gh.ship ? `gh search every ${Math.round(config.gh.pollMs / 1000)}s` : 'off (PM_SHIP=0)'}`)
 
   // The app hands out full shell access. Loudly flag the dangerous combination
   // of network exposure without a login.
@@ -517,6 +647,10 @@ server.listen(config.port, config.host, async () => {
 
   await store.rescan()
   console.log(`[pm] indexed    ${store.projects.length} projects, ${store.nodes.length} worktrees`)
+  // A restart mid-delete leaves trashed worktrees behind; finish them.
+  const swept = await Trash.sweep(store.projects.map((p) => p.path))
+  if (swept) console.log(`[pm] trash      resuming ${swept} interrupted worktree delete${swept === 1 ? '' : 's'}`)
+  if (config.gh.ship) Ship.start()
 })
 
 function authStatusLine() {

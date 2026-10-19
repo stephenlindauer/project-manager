@@ -1,24 +1,34 @@
 import { useState } from 'react'
-import { api } from '../api'
+import { ApiError, api } from '../api'
 import { TABS, useStore } from '../store'
-import type { Node, TabId } from '../types'
+import type { Agent, Node, SessionKind, TabId } from '../types'
 import { ChangesTab } from './ChangesTab'
 import { PrsTab } from './PrsTab'
 import { SummaryTab } from './SummaryTab'
 import { TasksTab } from './TasksTab'
 import { Terminal } from './Terminal'
 
-/** The two tabs backed by a tmux session, and the session kind each maps to. */
-const SESSION_KIND: Partial<Record<TabId, 'claude' | 'shell'>> = {
-  claude: 'claude',
-  terminal: 'shell',
-}
+const AGENTS: { id: Agent; label: string }[] = [
+  { id: 'claude', label: 'Claude' },
+  { id: 'codex', label: 'Codex' },
+]
 
 export function MainPanel({ node }: { node: Node }) {
   const activeTab = useStore((s) => s.activeTab)
   const setTab = useStore((s) => s.setTab)
   const sessions = useStore((s) => s.sessions)
-  const attention = useStore((s) => s.attention)
+  const claude = useStore((s) => s.claude)
+  const ship = useStore((s) => s.ship)
+  // The "Claude" tab hosts one agent CLI at a time, chosen per node. Each agent
+  // is its own tmux session, so toggling never disturbs the other one's context;
+  // the panes stay mounted once used so a toggle is a reveal, not a reconnect.
+  const agent: Agent = useStore((s) => s.agentByNode[node.id]) ?? 'claude'
+  const setAgent = useStore((s) => s.setAgent)
+  const [usedAgents, setUsedAgents] = useState<Set<Agent>>(() => new Set([agent]))
+  const pickAgent = (a: Agent) => { setUsedAgents((p) => new Set(p).add(a)); setAgent(node.id, a) }
+
+  /** The tmux session kind behind the current tab, if any. */
+  const SESSION_KIND: Partial<Record<TabId, SessionKind>> = { claude: agent, terminal: 'shell' }
   const setNewBranchFor = useStore((s) => s.setNewBranchFor)
   const rescan = useStore((s) => s.rescan)
   const night = useStore((s) => s.night)
@@ -27,19 +37,19 @@ export function MainPanel({ node }: { node: Node }) {
   // Bumping a kind's epoch changes the Terminal's key, forcing a full remount:
   // the old socket is torn down and a fresh one connects. MainPanel is keyed by
   // node.id in App, so this state resets when the project changes.
-  const [epoch, setEpoch] = useState<{ claude: number; shell: number }>({ claude: 0, shell: 0 })
-  const bump = (kind: 'claude' | 'shell') => setEpoch((p) => ({ ...p, [kind]: p[kind] + 1 }))
+  const [epoch, setEpoch] = useState<Record<SessionKind, number>>({ claude: 0, codex: 0, shell: 0 })
+  const bump = (kind: SessionKind) => setEpoch((p) => ({ ...p, [kind]: p[kind] + 1 }))
 
   const sessionKind = SESSION_KIND[activeTab]
 
   /** Drop and re-establish the socket without touching the tmux session. Fixes a
    *  dead/half-open connection (e.g. after the laptop sleeps) while keeping the
    *  session — and anything running in it — alive. */
-  const reconnect = (kind: 'claude' | 'shell') => bump(kind)
+  const reconnect = (kind: SessionKind) => bump(kind)
 
   /** Destroy the tmux session, then remount to spawn a fresh one. */
-  const killSession = async (kind: 'claude' | 'shell') => {
-    const label = kind === 'claude' ? 'Claude' : 'terminal'
+  const killSession = async (kind: SessionKind) => {
+    const label = kind === 'shell' ? 'terminal' : AGENTS.find((a) => a.id === kind)?.label ?? kind
     if (!confirm(
       `Kill the ${label} session for ${node.name}?\n\n` +
       'This ends the tmux session and everything running in it, then starts a ' +
@@ -54,14 +64,30 @@ export function MainPanel({ node }: { node: Node }) {
     }
   }
 
+  /** Two-step: a plain remove, then — if git refuses because the tree is
+   *  dirty — a second confirm that spells out what `--force` would discard. */
   const removeWorktree = async () => {
     if (!confirm(`Remove worktree ${node.cwd}?\n\nThe branch itself is kept.`)) return
+    const fail = (e: unknown) => alert(e instanceof Error ? e.message : String(e))
     try {
       await api.removeWorktree(node.id)
-      await rescan()
     } catch (e) {
-      alert(e instanceof Error ? e.message : String(e))
+      if (!(e instanceof ApiError) || e.detail.needsForce !== true) return fail(e)
+      const files = Array.isArray(e.detail.files) ? (e.detail.files as string[]) : []
+      const shown = files.slice(0, 15).map((f) => `  ${f}`)
+      if (files.length > shown.length) shown.push(`  …and ${files.length - shown.length} more`)
+      if (!confirm(
+        `${e.message}.\n\nForce-remove anyway? Uncommitted work in the worktree is lost` +
+        ` (the branch and its commits are kept).` +
+        (shown.length ? `\n\n${shown.join('\n')}` : ''),
+      )) return
+      try {
+        await api.removeWorktree(node.id, true)
+      } catch (e2) {
+        return fail(e2)
+      }
     }
+    await rescan()
   }
 
   return (
@@ -70,11 +96,14 @@ export function MainPanel({ node }: { node: Node }) {
         {TABS.map((t) => {
           const unread = sessions.some(
             (s) => s.nodeId === node.id && s.unread &&
-              ((t.id === 'claude' && s.kind === 'claude') || (t.id === 'terminal' && s.kind === 'shell')),
+              ((t.id === 'claude' && s.kind === agent) || (t.id === 'terminal' && s.kind === 'shell')),
           )
           // Attention outranks unread on the Claude tab: "it wants you" is
           // strictly more urgent than "it printed something".
-          const wants = t.id === 'claude' && Boolean(attention[node.id])
+          const st = claude[node.id]
+          const wants = t.id === 'claude' && Boolean(st && st.state !== 'working' && !st.seen)
+          // The PRs tab gets a static green dot while a pull request waits on you.
+          const ships = t.id === 'prs' && Boolean(ship[node.id]?.attention)
           return (
             <button
               key={t.id}
@@ -86,17 +115,33 @@ export function MainPanel({ node }: { node: Node }) {
                   : 'border-transparent text-muted hover:text-ink'
               }`}
             >
-              {t.label}
+              {t.id === 'claude' ? AGENTS.find((a) => a.id === agent)?.label : t.label}
               {wants ? (
                 <span className="ml-1.5 inline-block size-[7px] rounded-full bg-attn align-middle attn-ping" />
-              ) : unread && (
+              ) : unread ? (
                 <span className="ml-1.5 inline-block size-1.5 rounded-full bg-accent align-middle shadow-neon" />
+              ) : ships && (
+                <span className="ml-1.5 inline-block size-1.5 rounded-full bg-ok align-middle shadow-[0_0_6px_var(--color-ok)]" />
               )}
             </button>
           )
         })}
 
         <div className="ml-auto flex items-center gap-2 pr-1 text-[11px] text-muted">
+          {activeTab === 'claude' && (
+            <div className="flex overflow-hidden rounded border border-line" role="radiogroup" aria-label="Agent">
+              {AGENTS.map((a) => (
+                <button
+                  key={a.id}
+                  role="radio"
+                  aria-checked={agent === a.id}
+                  onClick={() => pickAgent(a.id)}
+                  className={`px-2 py-0.5 ${agent === a.id ? 'bg-accent/15 text-ink' : 'hover:text-ink'}`}
+                  title={`Show the ${a.label} session for this worktree`}
+                >{a.label}</button>
+              ))}
+            </div>
+          )}
           {sessionKind && (
             <>
               <button
@@ -150,9 +195,20 @@ export function MainPanel({ node }: { node: Node }) {
           reflows the shell. Keying on node.id tears them down only when the
           project itself changes.
         */}
-        <div className="h-full" style={{ display: activeTab === 'claude' ? 'block' : 'none' }}>
-          <Terminal key={`${node.id}:claude:${epoch.claude}`} nodeId={node.id} kind="claude" hidden={activeTab !== 'claude'} />
-        </div>
+        {AGENTS.filter((a) => usedAgents.has(a.id)).map((a) => {
+          const shown = activeTab === 'claude' && agent === a.id
+          return (
+            <div key={a.id} className="h-full" style={{ display: shown ? 'block' : 'none' }}>
+              <Terminal
+                key={`${node.id}:${a.id}:${epoch[a.id]}`}
+                nodeId={node.id}
+                kind={a.id}
+                hidden={!shown}
+                takesPrompts={agent === a.id}
+              />
+            </div>
+          )
+        })}
         <div className="h-full" style={{ display: activeTab === 'terminal' ? 'block' : 'none' }}>
           <Terminal key={`${node.id}:shell:${epoch.shell}`} nodeId={node.id} kind="shell" hidden={activeTab !== 'terminal'} />
         </div>

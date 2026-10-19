@@ -48,6 +48,10 @@ export function SummaryTab({ node }: { node: Node }) {
             onClick={() => api.open(data.path)}
             className="rounded border border-line px-2 py-1 text-[11px] text-muted hover:border-accent hover:text-ink"
           >Open in Finder</button>
+          <button
+            onClick={() => api.openInEditor(data.path)}
+            className="rounded border border-line px-2 py-1 text-[11px] text-muted hover:border-accent hover:text-ink"
+          >Open in VS Code</button>
         </header>
 
         <div className="font-mono text-[11px] text-muted">{data.path}</div>
@@ -132,6 +136,11 @@ export function SummaryTab({ node }: { node: Node }) {
                       >{w.branch ?? w.name}</button>
                       {w.isMain && <span className="text-[10px] text-muted">main</span>}
                       <span className="truncate font-mono text-[10px] text-muted/70">{w.path}</span>
+                      <button
+                        onClick={() => api.openInEditor(w.path)}
+                        title={`Open ${w.path} in VS Code`}
+                        className="ml-auto shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] text-muted hover:border-accent hover:text-ink"
+                      >VS Code</button>
                     </div>
                   )
                 })}

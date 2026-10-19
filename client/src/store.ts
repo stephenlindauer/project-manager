@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { api, authApi, setUnauthorizedHandler } from './api'
-import type { Attention, Node, Project, Runner, SessionInfo, TabId, Toast } from './types'
+import type { Agent, ClaudeStatus, Node, Project, Runner, SessionInfo, ShipEnvelope, ShipStatus, TabId, Toast } from './types'
 
 export const TABS: { id: TabId; label: string; hint: string }[] = [
   { id: 'summary', label: 'Summary', hint: 'Project overview and git state' },
@@ -16,8 +16,12 @@ type State = {
   nodes: Node[]
   runners: Runner[]
   sessions: SessionInfo[]
-  /** Sticky "Claude wants you" state per node, keyed by node id. */
-  attention: Record<string, Attention>
+  /** What each node's Claude session is doing, keyed by node id. Server-owned; see notify.js. */
+  claude: Record<string, ClaudeStatus>
+  /** The next thing you must do to ship each node's PRs, keyed by node id. Server-owned; see ship.js. */
+  ship: Record<string, ShipStatus>
+  /** The rest of the ship envelope: availability, staleness, PRs with no worktree. */
+  shipMeta: Omit<ShipEnvelope, 'nodes'>
   /** Transient notifications, oldest first. At most one per node. */
   toasts: Toast[]
   activeNodeId: string | null
@@ -29,6 +33,16 @@ type State = {
   night: boolean
   /** Sidebar collapsed to its rail. Persisted; hover and ⌥↑↓ peek over it. */
   navCollapsed: boolean
+  /** Projects folded to their heading in the sidebar, by project id. Persisted. */
+  collapsedProjects: Record<string, true>
+  /** Worktrees pinned to the top of their project, by node id. Persisted; see `visibleNodes`. */
+  pinnedNodes: Record<string, true>
+  /** Which agent CLI the "Claude" tab shows per node. Persisted; default claude. */
+  agentByNode: Record<string, Agent>
+  /** Sidebar shows only worktrees with something going on (see `isActiveNode`). Persisted. */
+  activeOnly: boolean
+  /** The Ship strip folded to its heading. Persisted. */
+  shipStripFolded: boolean
   /** A timed peek from keyboard navigation. Hover peeking is local to Sidebar. */
   navPeek: boolean
   newBranchFor: string | null
@@ -54,9 +68,20 @@ type State = {
   setPalette: (open: boolean) => void
   dismissToast: (id: string) => void
   showNode: (id: string) => void
-  clearAttention: (id: string) => void
+  /** Jump to a node and open one of its tabs, unfolding its project on the way. */
+  showNodeTab: (id: string, tab: TabId) => void
+  ackClaude: (id: string) => void
   toggleNight: () => void
   toggleNav: () => void
+  toggleProject: (projectId: string) => void
+  togglePin: (nodeId: string) => void
+  toggleActiveOnly: () => void
+  toggleShipStrip: () => void
+  setAgent: (nodeId: string, agent: Agent) => void
+  /** Push a local toast. Same `key` replaces an earlier one. */
+  notice: (t: { key: string; title: string; message?: string | null; tone?: Toast['tone']; nodeId?: string | null; sticky?: boolean }) => void
+  /** Create a worktree without holding a dialog open: toasts on start, success and failure. */
+  createWorktreeInBackground: (projectId: string, spec: { branch: string; base?: string }) => void
   peekNav: () => void
   setNewBranchFor: (projectId: string | null) => void
   /** Queue text for a node's Claude tab and switch to it. */
@@ -79,8 +104,12 @@ export const sectionOf = (n: Node) =>
  * recent worktree, so a branch you are working in lifts its whole project — and
  * its group — to the top. Within a project the main worktree stays first,
  * because the sidebar renders the other worktrees as its children.
+ *
+ * A pinned worktree ranks above its project's unpinned worktrees, never outside
+ * the project: a pin does not lift the project or its group. The main worktree
+ * still comes first.
  */
-export function visibleNodes(nodes: Node[]): Node[] {
+export function visibleNodes(nodes: Node[], pinned: Record<string, true>): Node[] {
   const recencyOf = (list: Node[]) => Math.max(0, ...list.map((n) => n.activityAt ?? 0))
 
 
@@ -109,9 +138,27 @@ export function visibleNodes(nodes: Node[]): Node[] {
         || a.name.localeCompare(b.name)
     }
     if (a.isMain !== b.isMain) return a.isMain ? -1 : 1
+    if (!pinned[a.id] !== !pinned[b.id]) return pinned[a.id] ? -1 : 1
     return (b.activityAt ?? 0) - (a.activityAt ?? 0) || a.label.localeCompare(b.label)
   })
 }
+
+/**
+ * "Active" for the sidebar's active-only filter: a Claude session in any
+ * state — working, blocked on you, ready, or idle at the prompt (a session you
+ * have looked at is still a session) — a running task, a pull request waiting
+ * on you (a `merge` you have not clicked is live work; see ship.js), or simply
+ * being the selected worktree, which must never vanish from under the panel
+ * showing it.
+ */
+export function isActiveNode(s: Pick<State, 'claude' | 'runners' | 'activeNodeId' | 'ship'>, id: string): boolean {
+  return id === s.activeNodeId || Boolean(s.claude[id]) || Boolean(s.ship[id]?.attention)
+    || s.runners.some((r) => r.nodeId === id && r.running)
+}
+
+/** Whether the active-only filter, if on, lets this node through. */
+export const isShownNode = (s: Pick<State, 'claude' | 'runners' | 'activeNodeId' | 'activeOnly' | 'ship'>, id: string) =>
+  !s.activeOnly || isActiveNode(s, id)
 
 /**
  * Night mode is a `data-night` attribute on <html>; index.css redefines the
@@ -120,6 +167,17 @@ export function visibleNodes(nodes: Node[]): Node[] {
  * the mode exists to avoid.
  */
 const nightAtBoot = localStorage.getItem('pm:night') === '1'
+
+function loadJson<T>(key: string, fallback: T): T {
+  try { return JSON.parse(localStorage.getItem(key) ?? '') as T } catch { return fallback }
+}
+
+function loadIdSet(key: string): Record<string, true> {
+  try {
+    const ids = JSON.parse(localStorage.getItem(key) ?? '[]') as string[]
+    return Object.fromEntries(ids.map((id) => [id, true as const]))
+  } catch { return {} }
+}
 function applyNight(on: boolean) {
   document.documentElement.toggleAttribute('data-night', on)
 }
@@ -130,7 +188,9 @@ export const useStore = create<State>((set, get) => ({
   nodes: [],
   runners: [],
   sessions: [],
-  attention: {},
+  claude: {},
+  ship: {},
+  shipMeta: { available: false, stale: false, at: null, orphans: [] },
   toasts: [],
   activeNodeId: null,
   activeTab: 'summary',
@@ -138,6 +198,11 @@ export const useStore = create<State>((set, get) => ({
   paletteOpen: false,
   night: nightAtBoot,
   navCollapsed: localStorage.getItem('pm:navCollapsed') === '1',
+  collapsedProjects: loadIdSet('pm:collapsedProjects'),
+  pinnedNodes: loadIdSet('pm:pinnedNodes'),
+  agentByNode: loadJson<Record<string, Agent>>('pm:agentByNode', {}),
+  activeOnly: localStorage.getItem('pm:activeOnly') === '1',
+  shipStripFolded: localStorage.getItem('pm:shipStripFolded') === '1',
   navPeek: false,
   newBranchFor: null,
   pendingInput: {},
@@ -156,7 +221,7 @@ export const useStore = create<State>((set, get) => ({
     }
 
     const [meta, data] = await Promise.all([api.meta(), api.projects()])
-    const nodes = visibleNodes(data.nodes)
+    const nodes = visibleNodes(data.nodes, get().pinnedNodes)
     const remembered = localStorage.getItem('pm:activeNode')
     const active = nodes.find((n) => n.id === remembered)?.id ?? nodes[0]?.id ?? null
     set({ meta, projects: data.projects, nodes, activeNodeId: active, needsLogin: false, loading: false })
@@ -176,7 +241,7 @@ export const useStore = create<State>((set, get) => ({
 
   rescan: async () => {
     const data = await api.rescan()
-    set({ projects: data.projects, nodes: visibleNodes(data.nodes) })
+    set({ projects: data.projects, nodes: visibleNodes(data.nodes, get().pinnedNodes) })
   },
 
   setActiveNode: (id) => {
@@ -193,10 +258,18 @@ export const useStore = create<State>((set, get) => ({
   },
 
   moveNode: (delta) => {
-    const { nodes, activeNodeId } = get()
+    const { nodes, activeNodeId, collapsedProjects } = get()
     if (!nodes.length) return
     const i = nodes.findIndex((n) => n.id === activeNodeId)
-    const next = nodes[(i + delta + nodes.length) % nodes.length]
+    // Rows inside a folded project are not on screen, so the keyboard walks
+    // past them — landing the selection on a row you cannot see is how a
+    // "folded" project turns into a mystery. Bounded, so a fully folded
+    // sidebar cannot spin.
+    let next: Node | undefined
+    for (let step = 1; step <= nodes.length; step++) {
+      const cand = nodes[(i + delta * step + nodes.length * step) % nodes.length]
+      if (!collapsedProjects[cand.projectId] && isShownNode(get(), cand.id)) { next = cand; break }
+    }
     if (next) get().setActiveNode(next.id)
     // Keyboard navigation is useless against a collapsed nav you can't see.
     get().peekNav()
@@ -223,17 +296,25 @@ export const useStore = create<State>((set, get) => ({
 
   /** Jump to a node's Claude session — what clicking a toast does. */
   showNode: (id) => {
-    get().setActiveNode(id)
-    get().setTab('claude')
-    get().clearAttention(id)
+    get().showNodeTab(id, 'claude')
+    get().ackClaude(id)
   },
 
-  clearAttention: (id) => {
-    if (!get().attention[id]) return
-    // Drop it locally first; the server echoes the same state back over SSE.
-    const { [id]: _gone, ...rest } = get().attention
-    set({ attention: rest })
-    api.clearAttention(id).catch(() => {})
+  showNodeTab: (id, tab) => {
+    // A deliberate jump unfolds the project: the row you just asked for must
+    // be on screen, not hidden under a heading.
+    const node = get().nodes.find((n) => n.id === id)
+    if (node && get().collapsedProjects[node.projectId]) get().toggleProject(node.projectId)
+    get().setActiveNode(id)
+    get().setTab(tab)
+  },
+
+  ackClaude: (id) => {
+    const cur = get().claude[id]
+    if (!cur || cur.seen) return
+    // Flip it locally first; the server echoes the same state back over SSE.
+    set({ claude: { ...get().claude, [id]: { ...cur, seen: true } } })
+    api.ackClaude(id).catch(() => {})
   },
 
   toggleNight: () => {
@@ -250,6 +331,65 @@ export const useStore = create<State>((set, get) => ({
     // "un-peeks" and looks like a flicker.
     if (peekTimer) clearTimeout(peekTimer)
     set({ navCollapsed, navPeek: false })
+  },
+
+  toggleActiveOnly: () => {
+    const activeOnly = !get().activeOnly
+    localStorage.setItem('pm:activeOnly', activeOnly ? '1' : '0')
+    set({ activeOnly })
+  },
+
+  toggleShipStrip: () => {
+    const shipStripFolded = !get().shipStripFolded
+    localStorage.setItem('pm:shipStripFolded', shipStripFolded ? '1' : '0')
+    set({ shipStripFolded })
+  },
+
+  setAgent: (nodeId, agent) => {
+    const agentByNode = { ...get().agentByNode, [nodeId]: agent }
+    localStorage.setItem('pm:agentByNode', JSON.stringify(agentByNode))
+    set({ agentByNode })
+  },
+
+  notice: ({ key, title, message = null, tone = 'info', nodeId = null, sticky = false }) => {
+    const toast: Toast = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, key, nodeId, title, tone, message, at: Date.now() }
+    pushToast(set, get, toast, sticky)
+  },
+
+  createWorktreeInBackground: (projectId, spec) => {
+    const project = get().projects.find((p) => p.id === projectId)
+    const what = spec.branch
+    const key = `worktree:${projectId}:${what}`
+    get().notice({ key, title: 'Creating worktree…', message: `${project?.name ?? ''} · ${what}`, sticky: true })
+    api.createWorktree(projectId, spec)
+      .then(async (res) => {
+        await get().rescan()
+        // Deliberately does not select the new node: this runs while you are
+        // doing something else, and yanking the panel over would undo that.
+        // The toast is the way in.
+        get().notice({
+          key, tone: 'ok', nodeId: res.node?.id ?? null,
+          title: 'Worktree ready',
+          message: res.branch,
+        })
+      })
+      .catch((e) => {
+        get().notice({ key, tone: 'bad', title: 'Worktree failed', message: e instanceof Error ? e.message : String(e), sticky: true })
+      })
+  },
+
+  toggleProject: (projectId) => {
+    const { [projectId]: was, ...rest } = get().collapsedProjects
+    const collapsedProjects = was ? rest : { ...rest, [projectId]: true as const }
+    localStorage.setItem('pm:collapsedProjects', JSON.stringify(Object.keys(collapsedProjects)))
+    set({ collapsedProjects })
+  },
+
+  togglePin: (nodeId) => {
+    const { [nodeId]: was, ...rest } = get().pinnedNodes
+    const pinnedNodes = was ? rest : { ...rest, [nodeId]: true as const }
+    localStorage.setItem('pm:pinnedNodes', JSON.stringify(Object.keys(pinnedNodes)))
+    set({ pinnedNodes, nodes: visibleNodes(get().nodes, pinnedNodes) })
   },
 
   peekNav: () => {
@@ -280,6 +420,13 @@ export const useStore = create<State>((set, get) => ({
 const PEEK_MS = 1600
 let peekTimer: ReturnType<typeof setTimeout> | null = null
 
+/** Add a toast, replacing any earlier one with the same key. `sticky` toasts wait for ✕ or a click. */
+function pushToast(set: (p: Partial<State>) => void, get: () => State, toast: Toast, sticky: boolean) {
+  const kept = get().toasts.filter((t) => t.key !== toast.key)
+  set({ toasts: [...kept, toast].slice(-MAX_TOASTS) })
+  if (!sticky) setTimeout(() => useStore.getState().dismissToast(toast.id), TOAST_MS)
+}
+
 /** Toast lifetime, and how long the slide-out runs. Keep in step with index.css. */
 const TOAST_MS = 7000
 const TOAST_EXIT_MS = 220
@@ -301,7 +448,7 @@ function connectEvents(set: (p: Partial<State>) => void, get: () => State) {
   es.onerror = () => { if (es.readyState === EventSource.CLOSED) eventSource = null }
 
   es.addEventListener('nodes', (e) => {
-    set({ nodes: visibleNodes(JSON.parse((e as MessageEvent).data)) })
+    set({ nodes: visibleNodes(JSON.parse((e as MessageEvent).data), get().pinnedNodes) })
   })
   es.addEventListener('node', (e) => {
     const updated = JSON.parse((e as MessageEvent).data) as Node
@@ -309,7 +456,7 @@ function connectEvents(set: (p: Partial<State>) => void, get: () => State) {
   })
   es.addEventListener('projects', (e) => {
     const data = JSON.parse((e as MessageEvent).data)
-    set({ projects: data.projects, nodes: visibleNodes(data.nodes) })
+    set({ projects: data.projects, nodes: visibleNodes(data.nodes, get().pinnedNodes) })
   })
   es.addEventListener('tasks', (e) => {
     set({ runners: JSON.parse((e as MessageEvent).data) })
@@ -320,18 +467,20 @@ function connectEvents(set: (p: Partial<State>) => void, get: () => State) {
 
   // Sticky state: sent whole, including once on connect, so a page opened after
   // the signal still shows the indicator.
-  es.addEventListener('attention', (e) => {
-    const list = JSON.parse((e as MessageEvent).data) as Attention[]
-    set({ attention: Object.fromEntries(list.map((a) => [a.nodeId, a])) })
+  es.addEventListener('claude-status', (e) => {
+    const list = JSON.parse((e as MessageEvent).data) as ClaudeStatus[]
+    set({ claude: Object.fromEntries(list.map((a) => [a.nodeId, a])) })
+  })
+  es.addEventListener('ship-status', (e) => {
+    const { nodes, ...shipMeta } = JSON.parse((e as MessageEvent).data) as ShipEnvelope
+    set({ ship: Object.fromEntries(nodes.map((s) => [s.nodeId, s])), shipMeta })
   })
 
   es.addEventListener('claude-toast', (e) => {
-    const toast = JSON.parse((e as MessageEvent).data) as Toast
+    const raw = JSON.parse((e as MessageEvent).data) as Omit<Toast, 'key'>
     // One toast per node: a project that finishes twice replaces its own notice
     // instead of stacking two of them.
-    const kept = get().toasts.filter((t) => t.nodeId !== toast.nodeId)
-    set({ toasts: [...kept, toast].slice(-MAX_TOASTS) })
-    setTimeout(() => useStore.getState().dismissToast(toast.id), TOAST_MS)
+    pushToast(set, get, { ...raw, key: `claude:${raw.nodeId}` }, false)
   })
 }
 

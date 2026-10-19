@@ -25,10 +25,15 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const HOOK = path.join(root, 'scripts', 'claude-notify-hook.js')
 const settingsPath = path.join(os.homedir(), '.claude', 'settings.json')
 
-/** Both events we listen for, and what each one means in the UI. */
+/** Every event we listen for, and what each one means in the UI. */
 const EVENTS = {
   Stop: 'Claude finished a turn',
   Notification: 'Claude is waiting on you',
+  // The four below drive the sidebar's "working · <phase>" badge, nothing louder.
+  UserPromptSubmit: 'Claude started working',
+  PreToolUse: 'Claude is working',
+  PostToolUse: 'Claude is working',
+  SessionEnd: 'Claude session ended',
 }
 
 const remove = process.argv.includes('--remove')

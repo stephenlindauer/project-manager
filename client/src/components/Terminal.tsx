@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { decodeOsc52, writeClipboard } from '../lib/clipboard'
 import { useStore } from '../store'
+import type { SessionKind } from '../types'
 
 /** Retro-neon ANSI palette, matched to the app's accent colours in index.css. */
 const XTERM_THEME = {
@@ -130,12 +131,14 @@ const RECONNECT_MAX_MS = 8000
  * switching tabs never drops the session or reflows the shell.
  */
 export function Terminal({
-  nodeId, kind, hidden, task,
+  nodeId, kind, hidden, task, takesPrompts = kind === 'claude',
 }: {
   nodeId: string
-  kind: 'claude' | 'shell'
+  kind: SessionKind
   hidden: boolean
   task?: string
+  /** Whether a queued `startInClaude` prompt is typed into this pane. Exactly one agent pane per node should say yes. */
+  takesPrompts?: boolean
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<XTerm | null>(null)
@@ -290,7 +293,7 @@ export function Terminal({
      * the prompt once it appears rather than in a shell underneath it.
      */
     const typePending = () => {
-      if (kind !== 'claude') return
+      if (!takesPrompts) return
       const ws = wsRef.current
       if (!ws || ws.readyState !== WebSocket.OPEN) return
       const text = useStore.getState().takePendingInput(nodeId)
@@ -324,7 +327,7 @@ export function Terminal({
       termRef.current = null
       wsRef.current = null
     }
-  }, [nodeId, kind, task, activated])
+  }, [nodeId, kind, task, activated, takesPrompts])
 
   // The socket may already be open when a prompt is queued; type it now.
   const pending = useStore((s) => s.pendingInput[nodeId])

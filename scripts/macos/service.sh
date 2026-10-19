@@ -127,8 +127,8 @@ cmd_install() {
 
   <key>EnvironmentVariables</key>
   <dict>
-    <key>NODE_ENV</key>
-    <string>production</string>
+    <key>PM_SERVE_DIST</key>
+    <string>1</string>
     <key>HOME</key>
     <string>$(printf '%s' "$HOME" | xml_escape)</string>
     <key>PATH</key>
@@ -155,6 +155,9 @@ PLIST_EOF
 
   warn_port_conflict
   launchctl bootout "$TARGET" >/dev/null 2>&1 || true
+  # bootout returns before the job is gone; bootstrapping the same label while
+  # it is still unloading fails with "Bootstrap failed: 5: Input/output error".
+  for _ in $(seq 1 20); do loaded || break; sleep 0.25; done
   launchctl bootstrap "$DOMAIN" "$PLIST"
   info "installed $LABEL"
   info "plist      $PLIST"

@@ -9,7 +9,7 @@ export function StatusBadges({ status, compact }: { status: GitStatus | null; co
   const dirty = status.staged + status.unstaged + status.untracked
 
   return (
-    <span className={`flex items-center gap-1 font-mono ${compact ? 'text-[10px]' : 'text-[11px]'}`}>
+    <span className={`flex items-center gap-1 font-mono text-[11px]`}>
       {status.conflicted > 0 && (
         <span className="text-bad" title={`${status.conflicted} conflicted`}>!{status.conflicted}</span>
       )}

@@ -10,3 +10,4 @@ pm.config.json
 .pm-auth.json
 .pm-hook-token
 certs/
+.pm-hook-dump.jsonl
