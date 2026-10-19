@@ -286,6 +286,13 @@ settings on purpose, since the point is every project the app manages.
   up only after a restart. Check `~/.claude/settings.json` before assuming the
   signals work: the hooks are not installed by default.
 
+- **The status webhook (`server/status-webhook.js`) rides the same records.**
+  Off unless `statusWebhook` is in `pm.config.json`. It subscribes to
+  `notifications`' `status` events rather than being called from the hook
+  route, so a slow or dead endpoint can never delay a hook. It POSTs on a
+  state or task change (phase churn does not count) and on a 60 s heartbeat,
+  serialized and never thrown from.
+
 ## Ship verdicts
 
 The second pill on a sidebar row (`ShipBadge`) and the **Ship** strip under

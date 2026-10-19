@@ -23,5 +23,13 @@
     "//sounds": "Names under /System/Library/Sounds (macOS only).",
     "waitingSound": "Ping",
     "doneSound": "Glass"
+  },
+
+  "statusWebhook": {
+    "//": "Off while url is empty. POSTs Claude session status; see README.",
+    "url": "",
+    "token": "shared-secret",
+    "reporter": "my-machine",
+    "include": { "repo": true, "branch": true, "task": true, "activity": true }
   }
 }

@@ -16,6 +16,7 @@ import * as Tasks from './tasks.js'
 import * as GH from './gh.js'
 import * as Auth from './auth.js'
 import * as Notify from './notify.js'
+import { createStatusWebhook } from './status-webhook.js'
 import * as Ship from './ship.js'
 import * as Trash from './trash.js'
 import * as Cleanup from './cleanup.js'
@@ -724,6 +725,23 @@ function attachRunner(ws, nodeId, name) {
   })
 }
 
+// ----------------------------------------------------------- status webhook
+
+/**
+ * Off unless `statusWebhook` is configured. It listens to the same status
+ * records the sidebar badges come from, so every state change a hook makes at
+ * /api/claude-hook reaches it without the route knowing — a failing webhook
+ * cannot slow or break a hook.
+ */
+const statusWebhook = config.statusWebhook && createStatusWebhook(config.statusWebhook, {
+  list: Notify.statusList,
+  lookup: (nodeId) => {
+    const hit = store.find(nodeId)
+    return hit ? { project: hit.project.name, branch: hit.worktree?.branch ?? null } : null
+  },
+})
+if (statusWebhook) Notify.notifications.on('status', statusWebhook.onStatus)
+
 // ----------------------------------------------------------------- boot
 
 const backend = await T.detectTmux()
@@ -753,6 +771,7 @@ server.listen(config.port, config.host, async () => {
   console.log(`[pm] terminals  ${backend ? 'tmux (persistent)' : 'node-pty (tmux not found)'}`)
   console.log('[pm] hooks      POST /api/claude-hook  ' +
     `(sound ${config.notify.sound ? 'on' : 'off'} — install with: npm run install-hooks)`)
+  console.log(`[pm] webhook    ${config.statusWebhook ? `POST ${new URL(config.statusWebhook.url).origin}` : 'off'}`)
   console.log(`[pm] ship       ${config.gh.ship ? `gh search every ${Math.round(config.gh.pollMs / 1000)}s` : 'off (PM_SHIP=0)'}`)
 
   // The app hands out full shell access. Loudly flag the dangerous combination
@@ -774,6 +793,7 @@ server.listen(config.port, config.host, async () => {
   const swept = await Trash.sweep(store.projects.map((p) => p.path))
   if (swept) console.log(`[pm] trash      resuming ${swept} interrupted worktree delete${swept === 1 ? '' : 's'}`)
   if (config.gh.ship) Ship.start()
+  if (statusWebhook) statusWebhook.start()
 })
 
 function authStatusLine() {

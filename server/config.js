@@ -2,6 +2,7 @@ import os from 'node:os'
 import path from 'node:path'
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { parseConfig as parseStatusWebhook } from './status-webhook.js'
 
 const home = os.homedir()
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -86,6 +87,12 @@ export const config = {
     /** Dev aid: a JSON file standing in for the GraphQL response, re-read every tick. */
     shipFixture: str(process.env.PM_SHIP_FIXTURE, file.gh?.shipFixture, null),
   },
+
+  /**
+   * Outbound session-status webhook (server/status-webhook.js). Null — off —
+   * unless pm.config.json has a `statusWebhook` block with a url.
+   */
+  statusWebhook: parseStatusWebhook(file.statusWebhook),
 
   /** Commands launched in the agent tab, one per agent (Claude ⇄ Codex toggle). */
   claudeCommand: process.env.PM_CLAUDE_COMMAND || file.claudeCommand || 'claude',
