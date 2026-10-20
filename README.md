@@ -92,9 +92,14 @@ It is off unless `pm.config.json` has a `statusWebhook` block:
   "url": "https://example.com/status",
   "token": "shared-secret",
   "reporter": "studio",
+  "headers": { "X-Example-Client-Id": "..." },
   "include": { "repo": true, "branch": true, "task": true, "activity": true }
 }
 ```
+
+`headers` is optional: extra request headers sent with every POST, for a proxy
+or gateway in front of the receiver that wants its own credentials. They cannot
+replace `Content-Type` or the bearer token.
 
 Each POST carries `Authorization: Bearer <token>` and a full snapshot:
 

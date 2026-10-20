@@ -117,3 +117,22 @@ test('a failing endpoint never throws', async () => {
   assert.equal(calls.length, 1)
   wh.stop()
 })
+
+test('extra headers go out with every POST; content-type and the bearer token stay ours', async () => {
+  const cfg = parseConfig({
+    url: 'https://hooks.example/status', token: 'tok', reporter: 'studio',
+    headers: { 'X-Proxy-Id': 'abc', 'Authorization': 'nope', 'Content-Type': 'text/plain', 'X-Number': 5 },
+  })
+  assert.deepEqual(cfg.headers, { 'x-proxy-id': 'abc', authorization: 'nope', 'content-type': 'text/plain' })
+  const calls = []
+  const wh = createStatusWebhook(cfg, {
+    list: () => [], lookup: () => null, log: quiet,
+    fetchFn: async (url, init) => { calls.push(init); return { ok: true, status: 200 } },
+  })
+  await wh.send()
+  assert.equal(calls[0].headers['x-proxy-id'], 'abc')
+  assert.equal(calls[0].headers.authorization, 'Bearer tok')
+  assert.equal(calls[0].headers['content-type'], 'application/json')
+  assert.equal(calls[0].headers['x-number'], undefined)
+  assert.deepEqual(parseConfig({ url: 'https://hooks.example/status' }).headers, {})
+})

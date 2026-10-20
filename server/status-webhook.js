@@ -5,6 +5,7 @@
  *
  *   POST <url>
  *   Authorization: Bearer <token>
+ *   <any extra `headers`>
  *   { reporter, sessions: [{ id, project, branch, task, state, activity, updated }] }
  *
  * `id` is the tmux session name (`pm-claude-<nodeId>`); `state` is one of
@@ -42,10 +43,17 @@ export function parseConfig(raw) {
   }
   const inc = raw.include ?? {}
   const flag = (v) => v === undefined ? true : Boolean(v)
+  // Extra request headers, e.g. a proxy's own credentials in front of the
+  // receiver. Only string values are kept.
+  const headers = {}
+  if (raw.headers && typeof raw.headers === 'object') {
+    for (const [k, v] of Object.entries(raw.headers)) if (typeof v === 'string') headers[k.toLowerCase()] = v
+  }
   return {
     url: url.href,
     token: typeof raw.token === 'string' && raw.token ? raw.token : null,
     reporter: typeof raw.reporter === 'string' && raw.reporter ? raw.reporter : null,
+    headers,
     include: { repo: flag(inc.repo), branch: flag(inc.branch), task: flag(inc.task), activity: flag(inc.activity) },
   }
 }
@@ -111,7 +119,8 @@ export function createStatusWebhook(cfg, { list, lookup, fetchFn = fetch, log = 
 
   async function post() {
     const { body, endedIds } = payload()
-    const headers = { 'content-type': 'application/json' }
+    // The body's type and the bearer token are this module's; extras cannot replace them.
+    const headers = { ...cfg.headers, 'content-type': 'application/json' }
     if (cfg.token) headers.authorization = `Bearer ${cfg.token}`
     try {
       const res = await fetchFn(cfg.url, {
