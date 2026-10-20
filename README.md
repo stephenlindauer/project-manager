@@ -81,6 +81,46 @@ actually open it.
 Nothing fires while you are already looking at that session's pane, so watching
 Claude work does not ping you once per turn.
 
+### Status webhook
+
+Optionally, the server can POST every Claude session's status to a URL of your
+choosing, so another dashboard can show what this machine's sessions are doing.
+It is off unless `pm.config.json` has a `statusWebhook` block:
+
+```json
+"statusWebhook": {
+  "url": "https://example.com/status",
+  "token": "shared-secret",
+  "reporter": "studio",
+  "include": { "repo": true, "branch": true, "task": true, "activity": true }
+}
+```
+
+Each POST carries `Authorization: Bearer <token>` and a full snapshot:
+
+```json
+{
+  "reporter": "studio",
+  "sessions": [{
+    "id": "pm-claude-08ab7134b775",
+    "project": "ProjectManager",
+    "branch": "main",
+    "task": "first line of the prompt that started the turn",
+    "state": "running",
+    "activity": "editing",
+    "updated": "2026-10-19T12:00:00.000Z"
+  }]
+}
+```
+
+`state` is `idle`, `running`, `waiting` or `ended`; a session is reported
+`ended` once after it goes away. `activity` is the badge's phase while running,
+otherwise the question or closing line. Every `include` flag defaults to `true`;
+set one to `false` to leave that field (`repo` controls `project`) out of the
+payload entirely. A snapshot is sent whenever a session's state changes (from
+the hook events above) and every 60 s as a heartbeat. A failed POST is logged
+and otherwise ignored — it never affects the hooks or the sessions.
+
 ## Worktrees
 
 `+ branch` on any project creates a linked worktree at
