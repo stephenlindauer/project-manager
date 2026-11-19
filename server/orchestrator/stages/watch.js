@@ -1,4 +1,7 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { run as exec } from '../../exec.js'
+import { resolveIn } from '../config.js'
 import { prState, due } from '../lib.js'
 
 /**
@@ -44,6 +47,23 @@ async function conversation(ctx, number) {
       reviews: pr.reviews.nodes.filter((x) => x.body?.trim()),
     }
   } catch { return null }
+}
+
+/**
+ * Every comment a teammate leaves on my PRs is kept, so a mistake gets
+ * through at most once. They are appended as raw lines to the repo's mined
+ * rules file (a `{ "mined": "…" }` entry in `houseRules`), which the review
+ * stage reads on the next run. Tidying that file into rules is by hand.
+ */
+function mine(ctx, comments) {
+  const entry = (ctx.repo.houseRules ?? []).find((r) => r && typeof r === 'object' && r.mined)
+  if (!entry) return
+  try {
+    const file = resolveIn(ctx.machine, entry.mined)
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    const lines = comments.map((c) => `- (PR #${ctx.run.pr.number}) ${c.replace(/\s+/g, ' ').slice(0, 600)}`)
+    fs.appendFileSync(file, `${lines.join('\n')}\n`)
+  } catch (err) { ctx.log('error', { message: `could not append to the mined rules: ${err.message}` }) }
 }
 
 export default {
@@ -96,6 +116,7 @@ export default {
       for (const r of talk.reviews) take(r.id, r.author?.login, r.authorAssociation, `${r.author?.login} (${r.state.toLowerCase().replace('_', ' ')}): ${r.body}`)
       if (outside) { run.outsideComments = (run.outsideComments ?? 0) + outside; ctx.log('outside-comments', { count: outside }) }
       if (fresh.length) {
+        mine(ctx, fresh)
         run.loop = { from: ctx.stage.id, kind: 'review' }
         return {
           fail: {

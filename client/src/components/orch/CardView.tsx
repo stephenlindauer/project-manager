@@ -50,7 +50,7 @@ export function CardView({ card, run, showRun = true }: { card: OrchCard; run: O
             {run.repoName} · {run.task.title}
           </button>
         )}
-        {card.stageId && <span className="font-mono text-muted/70">{card.stageId}</span>}
+        {card.stageId && <span className="shrink-0 whitespace-nowrap font-mono text-muted/70 max-md:hidden">{card.stageId}</span>}
         <span className="ml-auto shrink-0 text-muted/70">{ago(card.createdAt)}</span>
       </div>
 
@@ -72,9 +72,10 @@ export function CardView({ card, run, showRun = true }: { card: OrchCard; run: O
         {card.items && (
           <div className="mt-2.5 flex flex-col gap-1.5">
             {card.items.map((it) => (
-              <div key={it.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded border border-line bg-bg px-2 py-1.5">
-                <span className="min-w-0 flex-1 break-words font-mono text-[11px] leading-snug text-ink">{it.label}</span>
-                {it.blocked && <span className="font-mono text-[10px] text-warn" title={it.reasons.join('\n')}>blocked: {it.reasons[0] ?? 'by the validator'}</span>}
+              // Stacked on a phone: side by side, the reason squeezed the label to one word per line.
+              <div key={it.id} className="flex flex-col gap-1.5 rounded border border-line bg-bg px-2 py-1.5 md:flex-row md:items-center md:gap-2">
+                <span className="min-w-0 break-words font-mono text-[11px] leading-snug text-ink md:flex-1">{it.label}</span>
+                {it.blocked && <span className="break-words font-mono text-[10px] leading-snug text-warn md:max-w-[40%]" title={it.reasons.join('\n')}>blocked: {it.reasons.join('; ') || 'by the validator'}</span>}
                 <span className="flex shrink-0 gap-1">
                   {it.choices.map((c) => (
                     <button
@@ -92,13 +93,16 @@ export function CardView({ card, run, showRun = true }: { card: OrchCard; run: O
         {(card.freeText || card.type === 'gate' || card.type === 'fix') && (
           <input
             value={note} onChange={(e) => setNote(e.target.value)}
-            placeholder={card.freeText ? 'Or answer in your own words, then Enter' : 'Note — required to send back'}
+            placeholder={card.freeText ? (choices.length ? 'Or answer in your own words, then Enter' : 'Write the reason') : 'Note — required to send back'}
             onKeyDown={(e) => { if (e.key === 'Enter' && card.freeText && note.trim()) send(note.trim(), false) }}
             className="mt-2.5 w-full rounded border border-line bg-bg px-2 py-1.5 text-[12px] text-ink outline-none placeholder:text-muted/60 focus:border-accent max-md:text-[16px]"
           />
         )}
 
         <div className="mt-2.5 flex flex-wrap gap-2">
+          {card.freeText && !choices.length && (
+            <Button tone="primary" disabled={busy || !note.trim()} onClick={() => send(note.trim(), false)}>Send</Button>
+          )}
           {choices.map((c) => (
             <Button key={c.id} tone={c.id === card.recommended ? 'primary' : c.id === 'abandon' ? 'danger' : 'plain'} disabled={busy} onClick={() => send(c.id)}>
               {c.label}{c.id === card.recommended ? ' ✓' : ''}

@@ -60,7 +60,14 @@ export const APP_DEFAULTS = {
   session: { command: null, model: null, effort: null },
   resolver: { enabled: false, model: null },
   reviewers: [],
-  notifier: { routes: {} },
+  /**
+   * Where each event goes. Channels: `toast`, `sound`, `command` (runs
+   * `notifier.command` with the event in its environment — a push script).
+   * An event not listed uses the default: toast and sound for anything
+   * waiting on me and for a finished run, nothing for the rest.
+   * `"routes": { "merged": ["command"], "permission": [] }` adds and mutes.
+   */
+  notifier: { command: null, routes: {} },
   retentionDays: 30,
   tickMs: 3000,
   /** How often each repo's task queue is read. */

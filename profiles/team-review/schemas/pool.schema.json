@@ -1,0 +1,58 @@
+{
+  "type": "object",
+  "required": [
+    "question",
+    "window",
+    "regions",
+    "pool_total",
+    "unit",
+    "data_refs"
+  ],
+  "properties": {
+    "question": {
+      "type": "string",
+      "minLength": 10
+    },
+    "window": {
+      "type": "object",
+      "required": [
+        "from",
+        "to",
+        "days"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "days": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "regions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "pool_total": {
+      "type": "number",
+      "minimum": 0
+    },
+    "unit": {
+      "type": "string"
+    },
+    "data_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

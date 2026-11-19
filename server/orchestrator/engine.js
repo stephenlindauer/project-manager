@@ -128,7 +128,7 @@ export function createEngine({ machine, kinds, sources, checks = new Map(), stor
 
   const currentStage = (run) => run.stages[run.stageIndex] ?? null
 
-  function createRun({ task, repoPath, pipeline: pipelineName, sourceName = 'manual', brief, overrides = {} }) {
+  function createRun({ task, repoPath, pipeline: pipelineName, sourceName = 'manual', brief, overrides = {}, parent = null, records = null }) {
     const repo = loadRepo(repoPath)
     const name = overrides.pipeline ?? pipelineName ?? repo.pipeline
     const sourceCfg = machine.sources[sourceName] ?? {}
@@ -159,9 +159,20 @@ export function createEngine({ machine, kinds, sources, checks = new Map(), stor
       spend: { tokens: 0, usd: 0 },
       inbox: [],
       overrides,
+      // A run handed off from another (an investigation's cause) says so.
+      parent,
     }
     store.save(run)
     store.writeFile(run.id, 'brief.md', brief ?? task.title ?? '')
+    // Evidence travels with the run: records handed over are copied in, so
+    // the child does not depend on its parent's folder staying around.
+    for (const [name, from] of Object.entries(records ?? {})) {
+      try {
+        const file = store.writeFile(run.id, path.join('records', `${name}.json`), fs.readFileSync(from, 'utf8'))
+        ;(run.records ??= {})[name] = { file, neverAutoPass: false, items: [], inherited: true }
+      } catch (err) { log(run, { type: 'error', message: `could not attach record ${name}: ${err.message}` }) }
+    }
+    if (records) store.save(run)
     log(run, { type: 'created', pipeline: name, task: run.task })
     runs.set(run.id, run)
     events.emit('change', run)
@@ -350,6 +361,7 @@ export function createEngine({ machine, kinds, sources, checks = new Map(), stor
           log(run, { type: 'stage-done', stage: stage.id, note: outcome.note ?? null })
           if (stage.kind === 'pr' && run.pr) lifecycle(run, 'pr', { message: `PR opened: ${run.pr.url}` })
           if (stage.kind === 'merge') lifecycle(run, 'merged', { message: `Merged: ${run.pr?.url ?? ''}`.trim() })
+          if (['merge', 'deploy', 'record'].includes(stage.kind)) notify({ merge: 'merged', deploy: 'deployed', record: 'record' }[stage.kind], { run, stage })
           run.stageIndex++
           store.save(run)
           continue
@@ -405,6 +417,10 @@ export function createEngine({ machine, kinds, sources, checks = new Map(), stor
       writeFile: (rel, content) => store.writeFile(run.id, rel, content),
       readFile: (rel) => store.readFile(run.id, rel),
       answer: (key) => answerOf(run, key),
+      /** Areas with a post-check below prediction whose reason is not written yet. */
+      blockedAreas: () => [...runs.values()].flatMap((r) => r.inbox
+        .filter((c) => c.type === 'post-check' && !c.answer && c.area)
+        .map((c) => ({ area: c.area, runId: r.id, task: r.task.title }))),
       events: () => store.events(run.id),
       /** Ask me. Returns `{ answer }` once answered, otherwise `{ outcome }` to return from step. */
       ask(card) {

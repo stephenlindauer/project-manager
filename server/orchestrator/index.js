@@ -7,6 +7,7 @@ import { createRunStore } from './runstore.js'
 import { tmuxRunner, readFrom, sessionFiles, jobFiles, tail } from './runner.js'
 import { resolveSet } from './permissions.js'
 import { classify } from '../claude-phase.js'
+import { childEnv, run as exec } from '../exec.js'
 
 /**
  * Orchestrator mode, as the rest of the server sees it: one object with a
@@ -26,7 +27,7 @@ export async function createOrchestrator({ app = {}, interactiveWorking, claudeC
 
   if (!machine.enabled) {
     router.get('/orch/meta', (_req, res) => res.json({ enabled: false }))
-    return { enabled: false, router, machine, hook: () => false, ownedDirs: () => new Map(), on: () => {}, off: () => {}, snapshot: () => null, start: () => {} }
+    return { enabled: false, router, machine, hook: () => false, ownedDirs: () => new Map(), on: () => {}, off: () => {}, snapshot: () => null, start: () => {}, statusRecords: () => [] }
   }
 
   fs.mkdirSync(path.join(machine.dir, 'runs'), { recursive: true })
@@ -50,7 +51,8 @@ export async function createOrchestrator({ app = {}, interactiveWorking, claudeC
     if (live) live.allow = [...new Set([...(live.allow ?? []), rule])]
   }
 
-  const toasts = []
+  let toastSeq = 0
+  const TITLES = { 'run-done': 'Done', merged: 'Merged', deployed: 'Deployed', record: 'Record finished' }
   const engine = createEngine({
     machine, kinds, sources, checks, store, runner: tmuxRunner,
     deps: {
@@ -62,20 +64,48 @@ export async function createOrchestrator({ app = {}, interactiveWorking, claudeC
         if (!cfg.writes || !adapter?.write || !run.task.id) return null
         return adapter.write(run.task, event, cfg)
       },
-      notify(event, { run, card }) {
-        // Only what needs me makes noise. A worker finishing a step does not.
+      notify(event, { run, card, stage }) {
+        const name = card ? card.type : event
+        // Only what needs me makes noise by default. A worker finishing a
+        // step, a merge, a deploy: silent unless the machine routes them.
         const loud = card ? card.blocking !== false : event === 'run-done'
-        if (!loud) return
-        const toast = {
-          id: `${Date.now()}-${toasts.length}`, runId: run.id, event,
-          title: card ? card.title : `Done: ${run.task.title}`,
-          task: run.task.title, at: Date.now(),
+        const fallback = loud ? ['toast', 'sound', ...(machine.notifier.command ? ['command'] : [])] : []
+        const channels = machine.notifier.routes?.[name] ?? fallback
+        if (!channels.length) return
+        const title = card ? card.title : `${TITLES[event] ?? event}: ${run.task.title}`
+        if (channels.includes('toast')) {
+          engine.events.emit('toast', { id: `${Date.now()}-${++toastSeq}`, runId: run.id, event, title, task: run.task.title, at: Date.now() })
         }
-        engine.events.emit('toast', toast)
-        playSound?.(card ? 'waiting' : 'done')
+        if (channels.includes('sound')) playSound?.(card ? 'waiting' : 'done')
+        if (channels.includes('command') && machine.notifier.command) {
+          // Fire and forget: a push script that hangs or fails must not touch a run.
+          exec('/bin/sh', ['-c', machine.notifier.command], {
+            timeout: 20_000,
+            env: childEnv({
+              PM_EVENT: name, PM_TITLE: title, PM_TASK: run.task.title, PM_RUN: run.id, PM_REPO: run.repoName,
+              PM_STAGE: card?.stageId ?? stage?.id ?? '', PM_URL: run.pr?.url ?? run.task.url ?? '',
+            }),
+          }).then((r) => { if (r.failed) warnOnce(`notify:${name}`, `notifier command failed for "${name}": ${r.stderr.trim().slice(0, 200)}`) })
+        }
       },
     },
   })
+
+  // Hand-off: a stage starts child runs through the same door as everything else.
+  app.childRun = (parentId, item) => {
+    const hit = engine.list().find((r) => r.parent?.run === parentId && r.parent?.item === item)
+    return hit ? { id: hit.id } : null
+  }
+  app.startChild = ({ parent, item, pipeline, title, brief, records }) => {
+    const slug = String(item).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24)
+    const run = engine.createRun({
+      task: { id: parent.task.id, title, url: parent.task.url, type: null, ref: `${parent.task.ref}-${slug}`.slice(0, 64), untrusted: 0 },
+      repoPath: parent.repoPath, sourceName: parent.task.source, brief,
+      pipeline: pipeline ?? repoOf(parent.repoPath).handOffPipeline ?? null,
+      parent: { run: parent.id, item }, records,
+    })
+    return { id: run.id }
+  }
 
   // ------------------------------------------------------------ views
 
@@ -97,8 +127,23 @@ export async function createOrchestrator({ app = {}, interactiveWorking, claudeC
       spend: run.spend, pr: run.pr, worktree: run.worktree,
       nodeId: run.worktree?.dir ? app.nodeIdFor?.(run.worktree.dir) ?? null : null,
       cards: open.length, blocking: open.filter((c) => c.blocking).length,
+      parent: run.parent ?? null, postCheck: run.postCheck ?? null,
     }
   }
+
+  /**
+   * Runs as status records, for the status webhook: one per run that has a
+   * worktree, keyed by that worktree's node. The webhook reports the run, not
+   * each of its sessions.
+   */
+  const statusRecords = () => engine.list().filter((r) => !FINAL.has(r.state) && r.worktree?.dir).map((r) => {
+    const s = summary(r)
+    return {
+      nodeId: s.nodeId, at: r.updatedAt ?? r.createdAt,
+      state: s.blocking || r.state === 'waiting' ? 'waiting' : s.working ? 'working' : 'done',
+      task: r.task.title, phase: s.stageId, detail: s.note,
+    }
+  }).filter((r) => r.nodeId)
 
   const snapshot = () => ({
     runs: engine.list().map(summary).sort((a, b) => b.createdAt - a.createdAt),
@@ -386,7 +431,7 @@ export async function createOrchestrator({ app = {}, interactiveWorking, claudeC
   }))
 
   return {
-    enabled: true, router, machine, engine, hook, snapshot, startRun, rules, pollQueues,
+    enabled: true, router, machine, engine, hook, snapshot, startRun, rules, pollQueues, statusRecords,
     ownedDirs: () => engine.ownedDirs(),
     on: (ev, fn) => engine.events.on(ev, fn),
     off: (ev, fn) => engine.events.off(ev, fn),
