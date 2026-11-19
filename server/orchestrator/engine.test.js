@@ -147,17 +147,15 @@ test('a question ends the session; the answer resumes the same conversation', as
   assert.equal(run.state, 'done')
 })
 
-test('a refused call the worker got past raises a card without stopping the run', async () => {
+test('a refused call the worker got past is noted on the run, with no card', async () => {
   const { engine, runner, store, start } = setup({ stages: [{ kind: 'work' }] })
   const run = start()
   await engine.tick()
   runner.finish(store.dirOf(run.id), run.id, 1, { ...done(), denials: [{ tool: 'Bash', input: { command: 'curl example.com' } }] })
   await engine.tick()
   assert.equal(run.state, 'done')
-  const card = run.inbox[0]
-  assert.equal(card.type, 'permission')
-  assert.equal(card.blocking, false)
-  assert.equal(card.rule, 'Bash(curl example.com)')
+  assert.equal(run.inbox.length, 0)
+  assert.deepEqual(run.refused.map((r) => [r.stageId, r.set, r.rule]), [['work', 'work', 'Bash(curl example.com)']])
 })
 
 test('a blocked worker waits for the permission card and resumes with the rule allowed', async () => {
@@ -172,6 +170,7 @@ test('a blocked worker waits for the permission card and resumes with the rule a
   assert.equal(run.state, 'waiting')
   const [card] = engine.inbox()
   assert.equal(card.blocking, true)
+  assert.equal(card.rule, 'Bash(make gen)')
 
   await engine.answer(run.id, card.id, 'once')
   await engine.tick()
@@ -398,4 +397,49 @@ test('pause stops only this run\'s sessions and resume picks the conversation ba
 test('a pipeline that cannot run is refused when the run is created', () => {
   const { start } = setup({ stages: [{ kind: 'nope' }] })
   assert.throws(start, /unknown kind "nope"/)
+})
+
+test('tracker writes follow the run, never block it, and are not repeated after a restart', async () => {
+  const writes = []
+  let fail = false
+  let open = true
+  const { engine, store, start, make } = setup({
+    stages: [{ kind: 'hold' }, { kind: 'pr' }, { kind: 'merge' }],
+    kinds: {
+      hold: { step: async () => (open ? { done: true } : { wait: true }) },
+      pr: { owns: () => ['pr', 'branch'], step: async (ctx) => { ctx.run.pr = { number: 1, url: 'https://x/pr/1' }; return { done: true } } },
+      merge: { owns: () => ['ci'], step: async () => ({ done: true }) },
+    },
+    deps: { sourceWrite: async (run, event) => { if (fail) throw new Error('tracker down'); writes.push(event.type); return ['status'] } },
+  })
+  const run = start()
+  await engine.tick()
+  await new Promise((r) => setImmediate(r))
+  assert.deepEqual(writes, ['started', 'pr', 'merged', 'done'])
+  assert.equal(run.state, 'done')
+  assert.equal(store.effectState(run.id, 'source-write', 'pr').state, 'done')
+
+  // A write that fails is logged and the run carries on.
+  fail = true
+  const second = start()
+  await engine.tick()
+  await new Promise((r) => setImmediate(r))
+  assert.equal(second.state, 'done')
+  assert.ok(store.events(second.id).some((e) => e.type === 'error' && /tracker down/.test(e.message)))
+
+  // An interrupted write is skipped, not sent twice.
+  fail = false
+  open = false
+  const again = make()
+  again.boot()
+  const third = again.createRun({ task: { ref: 'T-3', title: 'Third' }, repoPath: '/tmp/repo', pipeline: 't', brief: 'b' })
+  await again.tick()
+  await new Promise((r) => setImmediate(r))
+  store.append(third.id, { type: 'intent', effect: 'source-write', key: 'pr' })
+  const before = writes.length
+  open = true
+  await again.tick()
+  await new Promise((r) => setImmediate(r))
+  assert.ok(!writes.slice(before).includes('pr'), 'the interrupted "pr" write was not repeated')
+  assert.ok(store.events(third.id).some((e) => e.type === 'source-write-skipped'))
 })

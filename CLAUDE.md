@@ -434,6 +434,17 @@ Orchestrator Mode PRD (revision 6). `profiles/README.md` covers setup;
   `resolvePipeline` refuses a pipeline where a stage kind and a skill both own
   one. A run snapshots its pipeline at creation, so editing config never
   changes a run in flight.
+- **Only a refused call that stops a worker becomes a card.** The ones it
+  got past are logged and listed on the run with an "Allow always" button.
+  The first real run raised four cards for harmless compound reads, which is
+  the confirmation habit this design exists to remove.
+- **Tracker writes never hold a run up** (`engine.js: lifecycle`). A failed
+  write is logged; one interrupted by a restart is skipped and noted, because
+  a duplicate comment on a real tracker is worse than a missing one. Nothing
+  is written unless the source has `writes: true`.
+- **Queue pickup** (`index.js: pollQueues`) reads each repo file's source
+  queue and starts a run per task that has none, up to the `wip` limit. A
+  task that fails to start is not retried until the next boot.
 - **Orchestrator mode is an overlay in the client.** The project tree and its
   terminals stay mounted underneath and are told `hidden`, so switching modes
   never reconnects or resizes a tmux pane.

@@ -370,6 +370,8 @@ export type OrchRunDetail = OrchRun & {
   brief: string | null
   events: OrchEvent[]
   records: { name: string; content: string | null }[]
+  /** Calls a permission set refused that the worker got past. */
+  refused: { stageId: string; set: string; rule: string; at: number; allowed?: boolean }[]
 }
 
 export type OrchTranscriptItem =

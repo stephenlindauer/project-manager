@@ -55,6 +55,13 @@ export async function createOrchestrator({ app = {}, interactiveWorking, claudeC
     machine, kinds, sources, checks, store, runner: tmuxRunner,
     deps: {
       loadRepo: repoOf, app, interactiveWorking, claudeCommand, allowAlways,
+      /** Status sync and event comments, only for a source that turned writes on. */
+      async sourceWrite(run, event) {
+        const cfg = machine.sources[run.task.source] ?? {}
+        const adapter = sources.get(cfg.adapter ?? run.task.source)?.impl
+        if (!cfg.writes || !adapter?.write || !run.task.id) return null
+        return adapter.write(run.task, event, cfg)
+      },
       notify(event, { run, card }) {
         // Only what needs me makes noise. A worker finishing a step does not.
         const loud = card ? card.blocking !== false : event === 'run-done'
@@ -137,6 +144,50 @@ export async function createOrchestrator({ app = {}, interactiveWorking, claudeC
       overrides: { ...fromTask, ...overrides },
     })
   }
+
+  // ------------------------------------------------------------ queues
+
+  /**
+   * Read each repo's queue and start a run for every task that does not have
+   * one. A repo joins by naming a source with a queue in its repo file. The
+   * work-in-progress limit is the brake: with that many runs at a gate of mine
+   * or in review, nothing new is picked up until some clear.
+   */
+  const refused = new Map()
+  async function pollQueues() {
+    let files = []
+    try { files = fs.readdirSync(path.join(machine.dir, 'repos')).filter((f) => f.endsWith('.json')) } catch { return }
+    for (const f of files) {
+      const name = f.slice(0, -5)
+      let fileCfg = {}
+      try { fileCfg = JSON.parse(fs.readFileSync(path.join(machine.dir, 'repos', f), 'utf8')) } catch { continue }
+      const repoPath = fileCfg.path ? fileCfg.path.replace(/^~(?=\/)/, process.env.HOME ?? '') : app.projectPathByName?.(name)
+      if (!repoPath) continue
+      const repo = repoOf(repoPath)
+      const cfg = machine.sources[repo.source]
+      const adapter = cfg && sources.get(cfg.adapter ?? repo.source)?.impl
+      if (!adapter?.queue || !(cfg.queue || repo.queue)) continue
+      let tasks = []
+      try { tasks = await adapter.queue({ ...cfg, queue: { ...cfg.queue, ...repo.queue } }) } catch (err) {
+        warnOnce(`queue:${repo.source}:${name}`, `queue for ${name} (${repo.source}) failed: ${err.message}`)
+        continue
+      }
+      for (const t of tasks) {
+        const cap = machine.limits.wip
+        if (cap && engine.wip() >= cap) return
+        const key = `${repo.source}:${t.id}`
+        if (refused.has(key)) continue
+        if (engine.list().some((r) => r.task.source === repo.source && String(r.task.id) === String(t.id))) continue
+        try { await startRun({ repoPath, sourceName: repo.source, input: t.id }) } catch (err) {
+          // Asked once per boot: a task that cannot start would otherwise be retried every poll.
+          refused.set(key, err.message)
+          console.warn(`[orch] could not start ${key}: ${err.message}`)
+        }
+      }
+    }
+  }
+  const warned = new Set()
+  const warnOnce = (key, msg) => { if (!warned.has(key)) { warned.add(key); console.warn(`[orch] ${msg}`) } }
 
   // ----------------------------------------------------------- hooks
 
@@ -244,6 +295,7 @@ export async function createOrchestrator({ app = {}, interactiveWorking, claudeC
       brief: store.readFile(run.id, 'brief.md'),
       events: events.slice(-400),
       records: listRecords(run.id),
+      refused: run.refused ?? [],
     })
   }))
 
@@ -298,6 +350,12 @@ export async function createOrchestrator({ app = {}, interactiveWorking, claudeC
     res.json({ ok: true })
   }))
 
+  router.post('/orch/runs/:id/refused/:index/allow', wrap(async (req, res) => {
+    const run = runOr404(req, res); if (!run) return
+    await engine.allowRefused(run.id, Number(req.params.index))
+    res.json({ ok: true })
+  }))
+
   router.post('/orch/runs/:id/control', wrap(async (req, res) => {
     const run = runOr404(req, res); if (!run) return
     await engine.control(run.id, String(req.body?.action ?? ''))
@@ -305,13 +363,16 @@ export async function createOrchestrator({ app = {}, interactiveWorking, claudeC
   }))
 
   return {
-    enabled: true, router, machine, engine, hook, snapshot, startRun, rules,
+    enabled: true, router, machine, engine, hook, snapshot, startRun, rules, pollQueues,
     ownedDirs: () => engine.ownedDirs(),
     on: (ev, fn) => engine.events.on(ev, fn),
     off: (ev, fn) => engine.events.off(ev, fn),
     start() {
       const live = engine.boot()
       engine.start()
+      const every = Math.max(30, machine.queuePollSeconds ?? 120) * 1000
+      setTimeout(() => pollQueues().catch(() => {}), 15_000).unref()
+      setInterval(() => pollQueues().catch(() => {}), every).unref()
       return {
         live,
         problems: [...machine.errors, ...[...kinds.values(), ...sources.values(), ...checks.values()].filter((a) => a.error).map((a) => a.error)],

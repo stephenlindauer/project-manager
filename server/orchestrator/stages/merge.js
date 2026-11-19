@@ -7,6 +7,7 @@ import { err, prState, due } from '../lib.js'
  *   merge.by: me                  wait for me to merge it
  *   merge.by: github-auto-merge   arm GitHub's auto-merge, then wait
  *   merge.by: app                 merge once the policy's approvals and CI are met
+ *   stage `waitOnly: true`        do nothing but wait for the merge (a skill owns it)
  *
  * With no `watch` stage before it, this stage is also what waits on CI, so a
  * red check here goes back to the worker with the failing check names.
@@ -19,7 +20,7 @@ const NO_CHECKS_GRACE_MS = 3 * 60_000
 
 export default {
   kind: 'merge',
-  owns: (_stage, { hasWatch }) => (hasWatch ? [] : ['ci']),
+  owns: (stage, { hasWatch }) => (hasWatch || stage.waitOnly ? [] : ['ci']),
 
   async step(ctx) {
     const { run, state: st } = ctx
@@ -41,7 +42,12 @@ export default {
     }
     if (pr.state === 'CLOSED') return { pause: `The pull request was closed without merging: ${pr.url}` }
 
-    const by = ship.merge.by
+    // `waitOnly`: a skill opened the PR, armed the merge and is watching CI
+    // itself. This stage's whole job is to notice when it lands.
+    if (ctx.stage.waitOnly) { st.waitingOn = 'the merge'; return { wait: true } }
+
+    // A task can turn auto-merge off for itself; it can never turn it on.
+    const by = run.overrides?.autoMerge === false ? 'me' : ship.merge.by
     const method = ship.merge.method
     if (by === 'me') { st.waitingOn = 'you to merge'; return { wait: true } }
     if (!['squash', 'merge', 'rebase'].includes(method)) {

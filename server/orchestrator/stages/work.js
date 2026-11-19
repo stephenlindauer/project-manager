@@ -50,8 +50,13 @@ export default {
       })
       if (w.outcome) return w.outcome
       ctx.state.summary = w.summary ?? w.text ?? null
-      // What the PR body says the change does: the last worker's own words.
-      if (!stage.skill) run.summary = ctx.state.summary
+      // What the PR body says the change does: the worker's first account of
+      // it. A later fix pass reports the fix, not the change, so it is added
+      // underneath rather than replacing it.
+      if (!stage.skill && ctx.state.summary) {
+        if (!run.summary || run.summaryStage !== stage.id) { run.summary = ctx.state.summary; run.summaryStage = stage.id }
+        else if (!run.summary.includes(ctx.state.summary)) run.summary = `${run.summary}\n\n**Follow-up:** ${ctx.state.summary}`
+      }
     }
 
     const defaults = stage.command || stage.skill || !run.worktree?.branch ? [] : ['commits']

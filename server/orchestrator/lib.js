@@ -30,7 +30,7 @@ const PR_FIELDS = 'number,url,state,isDraft,mergeable,mergeStateStatus,reviewDec
  * that overruns GitHub's budget.
  */
 export async function prState(cwd, ref) {
-  const r = await run('gh', ['pr', 'view', String(ref), '--json', PR_FIELDS], { cwd, timeout: 30_000 })
+  const r = await run('gh', ['pr', 'view', ...(ref == null ? [] : [String(ref)]), '--json', PR_FIELDS], { cwd, timeout: 30_000 })
   if (r.failed) return { error: err(r), missing: /no pull requests found|could not resolve/i.test(r.stderr) }
   let pr
   try { pr = JSON.parse(r.stdout) } catch { return { error: 'gh returned something that is not JSON' } }

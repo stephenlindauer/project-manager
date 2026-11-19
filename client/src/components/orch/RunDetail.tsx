@@ -118,6 +118,22 @@ export function RunDetail({ id, onBack }: { id: string; onBack: () => void }) {
         </Section>
       )}
 
+      {run.refused.length > 0 && (
+        <Section title={`Refused calls it got past (${run.refused.length})`} fold>
+          <ul className="flex flex-col gap-2">
+            {run.refused.map((r, i) => (
+              <li key={i} className="flex items-start gap-2">
+                <code className="min-w-0 flex-1 whitespace-pre-wrap break-all font-mono text-[11px] leading-snug text-muted">{r.rule}</code>
+                <span className="shrink-0 font-mono text-[10px] text-muted/60">{r.set} · {r.stageId}</span>
+                {r.allowed
+                  ? <span className="shrink-0 font-mono text-[10px] text-ok">allowed</span>
+                  : <Button onClick={() => orchApi.allowRefused(run.id, i).catch((e) => alert(e.message))} title={`Add this exact call to the "${r.set}" permission set`}>Allow always</Button>}
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
       {run.records.map((r) => (
         <Section key={r.name} title={`Record: ${r.name}`} fold>
           <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-snug text-muted">{r.content}</pre>
