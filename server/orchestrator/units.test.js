@@ -42,7 +42,12 @@ test('machine config: defaults, then pm.config.json, then orchestrator/machine.j
   assert.equal(loadRepo(m, '/somewhere/other').ship.merge.by, 'me')
 })
 
-test('with no config at all the orchestrator is off', () => {
+test('with no config at all the orchestrator is off', (t) => {
+  // PM_ORCH overrides every file layer, and a run started by the orchestrator
+  // inherits it — "no config" has to mean no env switch either.
+  const inherited = process.env.PM_ORCH
+  delete process.env.PM_ORCH
+  t.after(() => { if (inherited !== undefined) process.env.PM_ORCH = inherited })
   const root = tmp()
   assert.equal(loadMachine({ root, dir: path.join(root, 'orchestrator') }).enabled, false)
 })

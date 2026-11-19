@@ -3,6 +3,7 @@ import os from 'node:os'
 import pty from 'node-pty'
 import { childEnv, run } from './exec.js'
 import { config } from './config.js'
+import { spawnFailureHint } from './pty-hint.js'
 
 const SCROLLBACK_BYTES = 512 * 1024
 const SHELL = process.env.SHELL || '/bin/zsh'
@@ -153,9 +154,8 @@ class Session extends EventEmitter {
         this.proc = pty.spawn(SHELL, args, opts)
       }
     } catch (err) {
-      const hint = String(err?.message ?? err).includes('posix_spawnp')
-        ? '\r\n\x1b[90mIf this persists, run: npm run postinstall\x1b[0m'
-        : ''
+      const text = spawnFailureHint(err)
+      const hint = text ? `\r\n\x1b[90m${text}\x1b[0m` : ''
       this.append(`\r\n\x1b[31mFailed to start session: ${err?.message ?? err}\x1b[0m${hint}\r\n`)
       this.emit('exit')
       return null
