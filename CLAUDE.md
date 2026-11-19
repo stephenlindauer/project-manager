@@ -111,6 +111,16 @@ filenames visible on long paths, but without an inner `<bdi>` a leading dot move
 to the end and `.gitignore` renders as `gitignore.`. The DOM text stays correct, so
 only a screenshot catches this.
 
+**`.gitignore` must say `node_modules`, not `node_modules/`.** The trailing
+slash matches directories only. A worktree with a `node_modules` *symlink* to
+the main checkout then has an unignored file, `git add -A` commits it, and the
+next `git pull` in the main checkout deletes the real `node_modules` — ignored
+content is expendable to git — and puts a symlink to itself in its place
+(PRs #6–#8, 2026-11-18). The service kept running on what it had loaded, but
+nothing could be built and new pty spawns had no `spawn-helper`. Never check
+out a commit between #6 and the fix in a checkout that has a real
+`node_modules`.
+
 **Never let the server's own environment leak into what it spawns.** The
 service used to run with `NODE_ENV=production` as its "serve `dist/`" switch,
 and both spawn sites copied `process.env` into the child, so every terminal,
