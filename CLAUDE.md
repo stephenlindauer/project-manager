@@ -445,6 +445,27 @@ Orchestrator Mode PRD (revision 6). `profiles/README.md` covers setup;
 - **Queue pickup** (`index.js: pollQueues`) reads each repo file's source
   queue and starts a run per task that has none, up to the `wip` limit. A
   task that fails to start is not retried until the next boot.
+- **A gate's card key carries an epoch** (`gate:<stage>:<n>`). Cards are
+  never deleted, so without it a run sent back and reworked would find its
+  old answer and sail through. Send-back and take-over bump the epoch. A gate
+  already approved lets a fix loop that started after it (`run.loop`, set by
+  `watch`) pass without asking again.
+- **A fix for a teammate's comment is not pushed until I say** (`fix_push:
+  ask`, the default): the `pr` stage raises a "fix ready" card first. A CI fix
+  is pushed without one. Review comments reach a worker only from authors
+  with write access to the repo.
+- **A reviewer or validator that cannot run pauses the run.** It must never
+  pass for a clean review. `schema.js` is a deliberately small JSON Schema
+  subset, with no dependency to install: real rules go in the validator
+  command.
+- **A model reads "Bash was denied" as "the tool is off".** The first
+  team-review run stopped as blocked after one refused compound command,
+  without trying `git commit`. `workerRules` now lists the allowed shell
+  commands and says a refusal is per command, checked part by part.
+- **Take over / hand back.** Take-over stops the run's sessions and opens the
+  Claude tab on `claude --resume <sid>` (`terminals.js: prelaunch`, which
+  never replaces an existing session). Hand-back requires that session idle,
+  closes it — the click is the confirmation — and re-enters at verify.
 - **Orchestrator mode is an overlay in the client.** The project tree and its
   terminals stay mounted underneath and are told `hidden`, so switching modes
   never reconnects or resizes a tmux pane.

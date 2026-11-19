@@ -1,0 +1,18 @@
+{
+  "source": "manual",
+  "pipeline": "code-change",
+  "verify": ["npm test"],
+  "houseRules": [
+    "CLAUDE.md",
+    { "skill": "your-review-skill" },
+    { "mined": "house-rules/example-repo.md" }
+  ],
+  "ship": {
+    "merge": { "by": "me", "method": null },
+    "approvals": 1,
+    "ci": "required",
+    "fix_push": "ask",
+    "replies": "draft",
+    "deploy": { "by": "external", "check": null }
+  }
+}

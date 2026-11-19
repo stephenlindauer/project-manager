@@ -22,6 +22,8 @@ export function CardView({ card, run, showRun = true }: { card: OrchCard; run: O
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
+  const continueByHand = useStore((s) => s.continueByHand)
+  const [picks, setPicks] = useState<Record<string, string>>(() => Object.fromEntries((card.items ?? []).map((i) => [i.id, i.recommended])))
 
   const words = card.body.split(/\s+/)
   const long = words.length > FOLD_WORDS
@@ -29,8 +31,12 @@ export function CardView({ card, run, showRun = true }: { card: OrchCard; run: O
 
   const choices = [...card.choices].sort((a, b) => Number(b.id === card.recommended) - Number(a.id === card.recommended))
   const send = async (choice: string, withNote = true) => {
+    if (choice === 'send-back' && !note.trim()) { setError('Say what to change, then send it back.'); return }
     setBusy(true); setError(null)
-    try { await orchApi.answer(card.runId, card.id, choice, withNote ? note.trim() || undefined : undefined) } catch (e) {
+    try {
+      const r = await orchApi.answer(card.runId, card.id, choice, withNote ? note.trim() || undefined : undefined, card.items ? picks : undefined)
+      if (choice === 'take-over') continueByHand(r.resume)
+    } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally { setBusy(false) }
   }
@@ -63,10 +69,30 @@ export function CardView({ card, run, showRun = true }: { card: OrchCard; run: O
           </details>
         )}
 
-        {(card.freeText || card.type === 'gate') && (
+        {card.items && (
+          <div className="mt-2.5 flex flex-col gap-1.5">
+            {card.items.map((it) => (
+              <div key={it.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded border border-line bg-bg px-2 py-1.5">
+                <span className="min-w-0 flex-1 break-words font-mono text-[11px] leading-snug text-ink">{it.label}</span>
+                {it.blocked && <span className="font-mono text-[10px] text-warn" title={it.reasons.join('\n')}>blocked: {it.reasons[0] ?? 'by the validator'}</span>}
+                <span className="flex shrink-0 gap-1">
+                  {it.choices.map((c) => (
+                    <button
+                      key={c} onClick={() => setPicks((p) => ({ ...p, [it.id]: c }))}
+                      aria-pressed={picks[it.id] === c}
+                      className={`rounded border px-2 py-0.5 text-[11px] pointer-coarse:px-2.5 pointer-coarse:py-1.5 ${picks[it.id] === c ? 'border-accent text-accent' : 'border-line text-muted hover:text-ink'}`}
+                    >{c}</button>
+                  ))}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {(card.freeText || card.type === 'gate' || card.type === 'fix') && (
           <input
             value={note} onChange={(e) => setNote(e.target.value)}
-            placeholder={card.freeText ? 'Or answer in your own words, then Enter' : 'Note (sent with your choice)'}
+            placeholder={card.freeText ? 'Or answer in your own words, then Enter' : 'Note — required to send back'}
             onKeyDown={(e) => { if (e.key === 'Enter' && card.freeText && note.trim()) send(note.trim(), false) }}
             className="mt-2.5 w-full rounded border border-line bg-bg px-2 py-1.5 text-[12px] text-ink outline-none placeholder:text-muted/60 focus:border-accent max-md:text-[16px]"
           />

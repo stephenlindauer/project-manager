@@ -346,7 +346,15 @@ export async function createOrchestrator({ app = {}, interactiveWorking, claudeC
 
   router.post('/orch/runs/:id/cards/:card', wrap(async (req, res) => {
     const run = runOr404(req, res); if (!run) return
-    await engine.answer(run.id, req.params.card, String(req.body?.choice ?? ''), req.body?.note ? String(req.body.note).slice(0, 4000) : null)
+    if (req.body?.choice === 'take-over') {
+      // Same as the Take over button: stop the run now and open its conversation.
+      await engine.answer(run.id, req.params.card, 'take-over', null)
+      const nodeId = run.worktree?.dir ? app.nodeIdFor?.(run.worktree.dir) : null
+      const started = nodeId && run.resumeSid ? await app.openClaude?.(nodeId, run.worktree.dir, run.resumeSid) : false
+      return res.json({ ok: true, resume: { nodeId, sid: run.resumeSid, started } })
+    }
+    const items = req.body?.items && typeof req.body.items === 'object' ? req.body.items : null
+    await engine.answer(run.id, req.params.card, String(req.body?.choice ?? ''), req.body?.note ? String(req.body.note).slice(0, 4000) : null, items)
     res.json({ ok: true })
   }))
 
@@ -358,8 +366,23 @@ export async function createOrchestrator({ app = {}, interactiveWorking, claudeC
 
   router.post('/orch/runs/:id/control', wrap(async (req, res) => {
     const run = runOr404(req, res); if (!run) return
-    await engine.control(run.id, String(req.body?.action ?? ''))
-    res.json({ ok: true, run: summary(run) })
+    const action = String(req.body?.action ?? '')
+    if (action === 'handback') {
+      // Two Claudes must never share one conversation or one worktree: the
+      // interactive session has to be idle, and it is closed before the run
+      // resumes that conversation headless.
+      const nodeId = run.worktree?.dir ? app.nodeIdFor?.(run.worktree.dir) : null
+      const busy = nodeId ? app.claudeState?.(nodeId) : null
+      if (busy === 'working' || busy === 'waiting') return res.status(409).json({ error: `Claude is still ${busy} in that worktree. Hand back once it is idle.` })
+      if (nodeId) await app.closeClaude?.(nodeId)
+    }
+    await engine.control(run.id, action, req.body?.note ?? null)
+    let resume = null
+    if (action === 'takeover' && run.worktree?.dir) {
+      const nodeId = app.nodeIdFor?.(run.worktree.dir)
+      resume = { nodeId, sid: run.resumeSid, started: nodeId && run.resumeSid ? await app.openClaude?.(nodeId, run.worktree.dir, run.resumeSid) : false }
+    }
+    res.json({ ok: true, run: summary(run), resume })
   }))
 
   return {

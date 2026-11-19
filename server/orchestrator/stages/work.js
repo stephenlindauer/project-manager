@@ -46,7 +46,11 @@ export default {
         ownsEffects: Boolean(skill && stage.owns?.length),
         extraAllow: [...verify, ...(stage.allow ?? [])],
         model: stage.model,
-        prompt: () => `${taskHeader(ctx)}\n${body}\n${verify.length ? `\nThe repository's checks: ${ctx.repo.verify.map((c) => `\`${c}\``).join(', ')}.\n` : ''}`,
+        prompt: () => [
+          taskHeader(ctx), body,
+          verify.length ? `\nThe repository's checks: ${ctx.repo.verify.map((c) => `\`${c}\``).join(', ')}.` : '',
+          Object.keys(run.records ?? {}).length ? `\nRecords for this run (approved before this stage): ${Object.values(run.records).map((r) => r.file).join(', ')}` : '',
+        ].join('\n'),
       })
       if (w.outcome) return w.outcome
       ctx.state.summary = w.summary ?? w.text ?? null

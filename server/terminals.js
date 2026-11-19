@@ -250,6 +250,22 @@ export function sessionSummaries() {
   }))
 }
 
+/**
+ * Create a node's session ahead of anyone opening its tab, running `command`
+ * instead of the kind's usual launch line — how orchestrator takeover opens
+ * the Claude tab on `claude --resume <id>`. Refuses (returns false) when the
+ * session already exists: it may hold someone's work, and it is not replaced.
+ * Created at the default size, like any session nobody has measured yet.
+ */
+export async function prelaunch(nodeId, kind, cwd, command) {
+  if (!tmuxAvailable || !isKind(kind)) return false
+  const name = sessionName(nodeId, kind)
+  const exists = await run('tmux', ['has-session', '-t', `=${name}`])
+  if (!exists.failed) return false
+  const made = await run('tmux', ['new-session', '-d', '-s', name, '-c', cwd, '-x', '120', '-y', '32', command])
+  return !made.failed
+}
+
 /** True if someone has this session's pane on screen right now. */
 export function isWatched(nodeId, kind) {
   return (sessions.get(`${nodeId}:${kind}`)?.viewers ?? 0) > 0

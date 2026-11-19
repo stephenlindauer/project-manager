@@ -1,0 +1,33 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["problem", "evidence", "done_looks_like", "fix_kind", "precedents", "failure_mode_prevented", "prediction"],
+  "properties": {
+    "problem": { "type": "string", "minLength": 10 },
+    "evidence": { "type": "string", "minLength": 10 },
+    "done_looks_like": { "type": "string", "minLength": 10 },
+    "fix_kind": { "enum": ["root-cause", "symptom"] },
+    "precedents": {
+      "type": "array", "minItems": 2, "maxItems": 3,
+      "items": {
+        "type": "object",
+        "required": ["ref", "why_similar"],
+        "properties": { "ref": { "type": "string" }, "why_similar": { "type": "string" } }
+      }
+    },
+    "failure_mode_prevented": { "type": "string", "minLength": 10 },
+    "prediction": {
+      "type": "object",
+      "required": ["metric", "read_with", "baseline", "baseline_window", "low", "high", "earliest_check"],
+      "properties": {
+        "metric": { "type": "string" },
+        "read_with": { "type": "string" },
+        "baseline": { "type": "number" },
+        "baseline_window": { "type": "string" },
+        "low": { "type": "number" },
+        "high": { "type": "number" },
+        "earliest_check": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" }
+      }
+    }
+  }
+}

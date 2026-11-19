@@ -60,7 +60,10 @@ const INTERRUPTED = 'Your process was interrupted before it finished. Check the 
   'then continue the same task from where you stopped. Do not redo work that is already done.'
 
 /** What every worker is told about deciding, asking and being refused. */
-export function workerRules(machine, { ownsEffects = false } = {}) {
+const ONE_AT_A_TIME = 'A refusal applies to that one command, not to the whole tool. Each part of a compound command ' +
+  '(`a; b && c | d`) is checked on its own, so one unlisted part refuses the lot: run commands separately and keep them plain.'
+
+export function workerRules(machine, { ownsEffects = false, allowed = [] } = {}) {
   const lines = [
     'You are a worker inside an automated pipeline. Nobody is watching this session live.',
     '',
@@ -75,9 +78,12 @@ export function workerRules(machine, { ownsEffects = false } = {}) {
     lines.push('- You cannot push, open or merge a pull request, deploy, or write to a task tracker. ' +
       'The pipeline does those after you. Do not attempt them. Commit your work locally.')
   }
+  const shell = allowed.filter((r) => r.startsWith('Bash(')).map((r) => r.slice(5, -1).replace(/:\*$/, ' …'))
+  if (shell.length) lines.push(`- Shell commands you may run: ${shell.join(', ')}. Anything else is refused at once; there is nobody to approve it.`)
   lines.push(
-    '- If a tool call is refused, do not reach the same effect another way. Continue without it if you can. ' +
-      'If you cannot, finish with status "blocked" and say in `blocked_on` exactly what you needed.',
+    `- ${ONE_AT_A_TIME}`,
+    '- If a call is refused, do not reach the same effect another way. Continue without it if you can. ' +
+      'Finish with status "blocked" only when the task cannot be completed without it, and say in `blocked_on` exactly what you needed.',
     '',
     'Finish with status "done" and a short summary of what you did.',
   )
@@ -223,7 +229,7 @@ export function createEngine({ machine, kinds, sources, checks = new Map(), stor
   const openBlocking = (run) => run.inbox.some((c) => c.blocking && !c.answer)
 
   /** My answer to a card. Wakes the run once nothing blocking is left open. */
-  async function answer(runId, cardId, choice, note = null) {
+  async function answer(runId, cardId, choice, note = null, items = null) {
     const run = runs.get(runId)
     const card = run?.inbox.find((c) => c.id === cardId)
     if (!card) throw new Error('unknown card')
@@ -231,8 +237,18 @@ export function createEngine({ machine, kinds, sources, checks = new Map(), stor
     if (!choice) throw new Error('a choice is required')
     // A question may be answered in my own words; every other card is one of its buttons.
     if (!card.freeText && card.choices?.length && !card.choices.some((c) => c.id === choice)) throw new Error(`"${choice}" is not one of this card's choices`)
+    if (choice === 'send-back' && card.type === 'gate' && !note) throw new Error('say what to change when sending a run back')
     card.answer = { choice, note: note || null, at: Date.now() }
+    if (items && card.items) {
+      // An item may only take one of the choices its card offered it.
+      card.answer.items = Object.fromEntries(card.items.map((it) => [it.id, it.choices.includes(items[it.id]) ? items[it.id] : it.recommended]))
+    }
     log(run, { type: 'answer', stage: card.stageId, card: card.id, key: card.key, choice, note: note || null })
+
+    // "Take over" on any card puts the run in my hands at once. The stage
+    // that raised the card treats the answer as void and asks afresh after
+    // the hand-back.
+    if (choice === 'take-over') { await hold(run); changed(run); return }
 
     if (card.type === 'paused') {
       if (choice === 'abandon') { await stopSessions(run); return finish(run, 'abandoned', 'abandoned from a paused card') }
@@ -342,6 +358,12 @@ export function createEngine({ machine, kinds, sources, checks = new Map(), stor
         if (outcome.inbox) { raise(run, stage, outcome.inbox); run.state = 'waiting'; break }
         if (outcome.hold) { if (openBlocking(run)) run.state = 'waiting'; break }
         if (outcome.pause) { pause(run, stage, outcome.pause); break }
+        if (outcome.fail && outcome.uncounted) {
+          // My own "send back" is a direction, not a failed attempt.
+          jump(run, fixTarget(run, stage, outcome.to), { from: stage.id, reasons: outcome.fail.reasons ?? [] })
+          store.save(run)
+          continue
+        }
         if (outcome.fail) {
           const n = (run.attempts[stage.id] = (run.attempts[stage.id] ?? 0) + 1)
           const reasons = outcome.fail.reasons ?? ['failed']
@@ -383,6 +405,7 @@ export function createEngine({ machine, kinds, sources, checks = new Map(), stor
       writeFile: (rel, content) => store.writeFile(run.id, rel, content),
       readFile: (rel) => store.readFile(run.id, rel),
       answer: (key) => answerOf(run, key),
+      events: () => store.events(run.id),
       /** Ask me. Returns `{ answer }` once answered, otherwise `{ outcome }` to return from step. */
       ask(card) {
         const a = answerOf(run, card.key)
@@ -434,7 +457,7 @@ export function createEngine({ machine, kinds, sources, checks = new Map(), stor
     try {
       started = await runner.startSession({
         runDir: ctx.runDir, runId: run.id, n, cwd: ctx.cwd, prompt,
-        settings, schema: full, system: workerRules(machine, { ownsEffects }),
+        settings, schema: full, system: workerRules(machine, { ownsEffects, allowed: settings.permissions.allow }),
         sessionId: sid, resume,
         model: model ?? machine.session.model, effort: effort ?? machine.session.effort,
         command: machine.session.command ?? deps.claudeCommand ?? 'claude',
@@ -474,6 +497,39 @@ export function createEngine({ machine, kinds, sources, checks = new Map(), stor
 
     if (w.phase === 'done') return { out: w.out, text: w.text }
 
+    if (w.phase === 'resolving') {
+      const q = w.q
+      const r = await worker(ctx, `${key}:resolver:${q.n}`, {
+        role: 'resolver', set: 'read', fresh: true, noResolver: true, model: machine.resolver.model,
+        schema: {
+          type: 'object',
+          properties: { answer: { type: 'string' }, confident: { type: 'boolean' }, why: { type: 'string' } },
+          required: ['answer', 'confident', 'why'],
+        },
+        prompt: [
+          'A worker on this task stopped to ask a question. Decide it from the code, the data and the rules in this repository.',
+          `\n## The task\n\n${run.task.title}\n\n${store.readFile(run.id, 'brief.md') ?? ''}`,
+          `\n## The question\n\n${q.text}`,
+          `\n## The options\n\n${(q.options ?? []).map((o) => `- ${o}`).join('\n')}`,
+          '\nPut in `output`: `answer` (one of the options, word for word), `confident` (true only if the repository settles it), and `why` in a sentence.',
+          'If it depends on something only a person can decide, set confident to false. Do not ask a question of your own. Do not edit anything.',
+        ].join('\n'),
+      })
+      if (r.outcome && !r.outcome.pause) return r
+      const verdict = r.out ?? {}
+      const agrees = verdict.confident === true && q.recommended && String(verdict.answer).trim() === String(q.recommended).trim()
+      log(run, { type: 'resolver', stage: stage.id, question: q.text, answer: verdict.answer ?? null, confident: Boolean(verdict.confident), agrees: Boolean(agrees) })
+      if (agrees) {
+        log(run, { type: 'decision', stage: stage.id, by: 'resolver', what: q.text, chose: verdict.answer, why: verdict.why ?? null })
+        w.nextPrompt = `Answer to your question: ${verdict.answer}\n\nContinue.`
+        w.phase = 'idle'
+      } else {
+        // They differ, or the resolver is not sure: this one is mine.
+        if (verdict.answer) w.q.summary = `${q.summary}\n\nA second session looked at this and said: ${verdict.answer}${verdict.confident ? '' : ' (not confident)'} — ${verdict.why ?? ''}`.trim()
+        return askMe(w, stage, key)
+      }
+    }
+
     if (w.phase === 'question') {
       const a = answerOf(run, w.card)
       if (!a) return { outcome: { hold: true } }
@@ -487,7 +543,7 @@ export function createEngine({ machine, kinds, sources, checks = new Map(), stor
       const lines = cards.map((c) => (c.answer.choice === 'deny'
         ? `- Refused, and it stays refused: ${c.rule}`
         : `- Now permitted: ${c.rule}`))
-      w.nextPrompt = `About the calls that were refused:\n${lines.join('\n')}\n\nContinue the task.`
+      w.nextPrompt = `About the calls that were refused:\n${lines.join('\n')}\n\n${ONE_AT_A_TIME}\n\nContinue the task.`
       w.phase = 'idle'
     }
 
@@ -600,28 +656,16 @@ export function createEngine({ machine, kinds, sources, checks = new Map(), stor
     }
 
     if (out.status === 'question' && out.question?.text) {
-      const q = out.question
-      const resolved = await deps.resolve?.({ ctx, question: q, role }).catch(() => null)
-      if (resolved?.answer) {
-        log(run, { type: 'decision', stage: stage.id, by: 'resolver', what: q.text, chose: resolved.answer, why: resolved.why ?? null })
-        w.nextPrompt = `Answer to your question: ${resolved.answer}\n\nContinue.`
-        w.phase = 'idle'
+      w.q = { ...out.question, summary: out.summary ?? '', n: w.n }
+      // Resolver before me: a separate session gets the question and the
+      // options, not the worker's preferred answer. Its own sessions are
+      // never resolved in turn.
+      if (machine.resolver?.enabled && !opts.noResolver) {
+        w.phase = 'resolving'
         store.save(run)
         return worker(ctx, key, opts)
       }
-      w.card = `q:${stage.id}:${key}:${w.n}`
-      w.phase = 'question'
-      return {
-        outcome: {
-          inbox: {
-            key: w.card, type: 'question', title: q.text,
-            body: out.summary ?? '',
-            choices: (q.options ?? []).map((o) => ({ id: o, label: o })),
-            recommended: q.recommended ?? null,
-            freeText: true,
-          },
-        },
-      }
+      return askMe(w, stage, key)
     }
 
     w.phase = 'done'
@@ -629,6 +673,23 @@ export function createEngine({ machine, kinds, sources, checks = new Map(), stor
     w.text = out.summary ?? t.text
     store.save(run)
     return { out: w.out, text: w.text, summary: out.summary ?? null }
+  }
+
+  function askMe(w, stage, key) {
+    const q = w.q
+    w.card = `q:${stage.id}:${key}:${q.n}`
+    w.phase = 'question'
+    return {
+      outcome: {
+        inbox: {
+          key: w.card, type: 'question', title: q.text,
+          body: q.summary ?? '',
+          choices: (q.options ?? []).map((o) => ({ id: o, label: o })),
+          recommended: q.recommended ?? null,
+          freeText: true,
+        },
+      },
+    }
   }
 
   const readOr = (file) => { try { return fs.readFileSync(file, 'utf8') } catch { return '' } }
@@ -781,10 +842,60 @@ export function createEngine({ machine, kinds, sources, checks = new Map(), stor
     }
   }
 
-  async function control(runId, action) {
+  /**
+   * Take over: the run stops and stays stopped while I hold its worktree, so
+   * two Claudes never edit the same files. `resumeSid` is the conversation to
+   * continue by hand — the last worker's.
+   */
+  async function hold(run) {
+    await stopSessions(run)
+    run.state = 'held'
+    run.heldAt = Date.now()
+    const last = [...run.sessions].reverse().find((s) => /^(worker|skill:)/.test(s.role))
+    run.resumeSid = last?.sid ?? null
+    log(run, { type: 'takeover', sid: run.resumeSid })
+  }
+
+  /**
+   * Hand back: the run re-checks the worktree as it now stands. It re-enters
+   * at verify (or where it was, in a pipeline with no verify), so my edits go
+   * through the same checks, reviewers and gates as a worker's.
+   */
+  function handBack(run, note) {
+    if (run.state !== 'held') throw new Error('run is not held')
+    if (note) {
+      const brief = store.readFile(run.id, 'brief.md') ?? ''
+      store.writeFile(run.id, 'brief.md', `${brief.trimEnd()}\n\n## Note added at hand-back\n\n${note}\n`)
+    }
+    const verify = run.stages.find((s) => s.kind === 'verify')
+    const here = run.stages[run.stageIndex]
+    const target = verify && run.stages.indexOf(verify) <= run.stageIndex ? verify.id : here?.id
+    run.state = 'active'
+    run.loop = null
+    if (target) jump(run, target, null)
+    log(run, { type: 'handback', note: note ?? null, to: target ?? null })
+  }
+
+  async function control(runId, action, arg = null) {
     const run = runs.get(runId)
     if (!run) throw new Error('unknown run')
     if (FINAL.has(run.state)) throw new Error(`run is ${run.state}`)
+    if (action === 'takeover') {
+      if (run.state === 'held') throw new Error('you already have this run')
+      await hold(run)
+      changed(run)
+      return run
+    }
+    if (action === 'handback') {
+      handBack(run, arg ? String(arg).slice(0, 2000) : null)
+      changed(run)
+      kick()
+      return run
+    }
+    if (action === 'release') {
+      await stopSessions(run)
+      return finish(run, 'released', 'released: the worktree is now an ordinary project')
+    }
     if (action === 'pause') {
       await stopSessions(run)
       run.state = 'paused'

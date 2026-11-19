@@ -34,9 +34,23 @@ export function RunDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const decisions = run.events.filter((e) => e.type === 'decision')
   const running = run.sessions.find((s) => s.status === 'running')
   const shown = session ?? running?.n ?? run.sessions.at(-1)?.n ?? null
+  const continueByHand = useStore((s) => s.continueByHand)
   const control = (action: 'pause' | 'resume' | 'abandon') => {
     if (action === 'abandon' && !confirm('Abandon this run?\n\nIts sessions stop. The worktree and branch are left as they are.')) return
     orchApi.control(run.id, action).catch((e) => alert(e.message))
+  }
+  const takeOver = () => {
+    if (!confirm('Take over this run?\n\nIts sessions stop and the Claude tab opens on the same conversation. The orchestrator does nothing in that worktree until you hand it back.')) return
+    orchApi.control(run.id, 'takeover').then((r) => continueByHand(r.resume)).catch((e) => alert(e.message))
+  }
+  const handBack = () => {
+    const note = prompt('Hand back to the orchestrator?\n\nThis closes the Claude tab\'s session in that worktree, then re-checks the tree as it stands: verify, review, gates.\n\nOptional note for the run:', '')
+    if (note === null) return
+    orchApi.control(run.id, 'handback', note.trim() || undefined).catch((e) => alert(e.message))
+  }
+  const release = () => {
+    if (!confirm('Release this run?\n\nThe run ends and the worktree becomes an ordinary project.')) return
+    orchApi.control(run.id, 'release').catch((e) => alert(e.message))
   }
 
   return (
@@ -75,9 +89,19 @@ export function RunDetail({ id, onBack }: { id: string; onBack: () => void }) {
 
       {!isFinal(run) && (
         <div className="flex flex-wrap gap-2">
-          {run.state === 'paused'
-            ? <Button tone="primary" onClick={() => control('resume')}>Resume</Button>
-            : <Button onClick={() => control('pause')} title="Stop its sessions; resume picks the conversation back up">Pause</Button>}
+          {run.state === 'held' ? (
+            <>
+              <Button tone="primary" onClick={handBack} title="Re-check the worktree as it stands and carry on">Hand back</Button>
+              <Button onClick={release} title="End the run; keep the worktree as an ordinary project">Release</Button>
+            </>
+          ) : (
+            <>
+              {run.state === 'paused'
+                ? <Button tone="primary" onClick={() => control('resume')}>Resume</Button>
+                : <Button onClick={() => control('pause')} title="Stop its sessions; resume picks the conversation back up">Pause</Button>}
+              {run.worktree && <Button onClick={takeOver} title="Continue this run by hand in its Claude tab">Take over</Button>}
+            </>
+          )}
           <Button tone="danger" onClick={() => control('abandon')}>Abandon</Button>
         </div>
       )}

@@ -14,6 +14,7 @@ cp -R profiles/solo-ship/. orchestrator/
 | Profile | For |
 | --- | --- |
 | `solo-ship` | Personal repos that ship without review: build, verify, PR, merge, deploy. No gates. |
+| `team-review` | A machine with team review. A plan record and a plan gate before any code; fresh reviewers and a PR gate with an explain-back before the team sees it; then CI and review comments are watched. |
 | `ci-only` | A solo business repo where CI is the only reviewer. Tasks come from a ClickUp queue, and one existing skill cuts the branch, opens the PR, writes status and watches CI. |
 
 Profiles carry structure and placeholder values only. Real repo names, paths,
