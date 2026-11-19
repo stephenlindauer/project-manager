@@ -43,6 +43,12 @@ type State = {
   activeOnly: boolean
   /** The Ship strip folded to its heading. Persisted. */
   shipStripFolded: boolean
+  /**
+   * On a phone the nav and the panel each fill the screen; this is which one
+   * shows. Picking a worktree flips it to the panel, the panel's back button
+   * flips it home. Ignored at desktop widths.
+   */
+  phonePane: 'nav' | 'panel'
   /** A timed peek from keyboard navigation. Hover peeking is local to Sidebar. */
   navPeek: boolean
   newBranchFor: string | null
@@ -87,6 +93,7 @@ type State = {
   peekNav: () => void
   setNewBranchFor: (projectId: string | null) => void
   setCleanupOpen: (open: boolean) => void
+  setPhonePane: (pane: 'nav' | 'panel') => void
   /** Queue text for a node's Claude tab and switch to it. */
   startInClaude: (nodeId: string, text: string) => void
   takePendingInput: (nodeId: string) => string | null
@@ -206,6 +213,7 @@ export const useStore = create<State>((set, get) => ({
   agentByNode: loadJson<Record<string, Agent>>('pm:agentByNode', {}),
   activeOnly: localStorage.getItem('pm:activeOnly') === '1',
   shipStripFolded: localStorage.getItem('pm:shipStripFolded') === '1',
+  phonePane: 'nav',
   navPeek: false,
   newBranchFor: null,
   cleanupOpen: false,
@@ -250,7 +258,7 @@ export const useStore = create<State>((set, get) => ({
 
   setActiveNode: (id) => {
     localStorage.setItem('pm:activeNode', id)
-    set({ activeNodeId: id, activeTab: get().tabByNode[id] ?? 'summary' })
+    set({ activeNodeId: id, activeTab: get().tabByNode[id] ?? 'summary', phonePane: 'panel' })
   },
 
   setTab: (tab) => {
@@ -405,6 +413,7 @@ export const useStore = create<State>((set, get) => ({
 
   setNewBranchFor: (newBranchFor) => set({ newBranchFor }),
   setCleanupOpen: (cleanupOpen) => set({ cleanupOpen }),
+  setPhonePane: (phonePane) => set({ phonePane }),
 
   startInClaude: (nodeId, text) => {
     set({ pendingInput: { ...get().pendingInput, [nodeId]: text } })

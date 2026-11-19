@@ -33,8 +33,8 @@ export function ChangesTab({ node }: { node: Node }) {
   const total = changes.staged.length + changes.unstaged.length + changes.untracked.length
 
   return (
-    <div className="flex h-full">
-      <div className="w-[300px] shrink-0 overflow-y-auto border-r border-line">
+    <div className="flex h-full max-md:flex-col">
+      <div className="w-[300px] shrink-0 overflow-y-auto border-r border-line max-md:max-h-[40%] max-md:w-full max-md:border-r-0 max-md:border-b">
         <div className="flex items-center gap-2 border-b border-line px-3 py-2">
           <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">
             {total} change{total === 1 ? '' : 's'}

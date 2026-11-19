@@ -45,7 +45,7 @@ export function NewBranchDialog() {
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 pt-[16vh]" onClick={close}>
       <div
-        className="w-[460px] rounded-xl border border-line bg-panel p-4 shadow-2xl"
+        className="w-[460px] max-w-[calc(100vw-32px)] rounded-xl border border-line bg-panel p-4 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <h2 className="mb-1 text-[14px] font-semibold">New worktree</h2>

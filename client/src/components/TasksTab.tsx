@@ -26,8 +26,8 @@ export function TasksTab({ node }: { node: Node }) {
   const runnerFor = (name: string) => runners.find((r) => r.name === name)
 
   return (
-    <div className="flex h-full">
-      <div className="w-[290px] shrink-0 overflow-y-auto border-r border-line">
+    <div className="flex h-full max-md:flex-col">
+      <div className="w-[290px] shrink-0 overflow-y-auto border-r border-line max-md:max-h-[45%] max-md:w-full max-md:border-r-0 max-md:border-b">
         <div className="border-b border-line px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-muted">
           Scripts
         </div>

@@ -157,7 +157,29 @@ client-only changes when a session is live.
 
 Also note: tmux sizes a window to its **smallest attached client**. Opening a second
 viewer (including a headless test browser) on a live session can resize it out from
-under the user.
+under the user. A phone is exactly that viewer: opening a session there narrows it to
+~50 columns until the desktop pane next reports its size.
+
+## Phone layout
+
+Below Tailwind's `md` (48rem; `usePhone()` in `lib/media.ts`, `max-md:` in CSS)
+the nav and the panel each fill the screen — `phonePane` in the store says which,
+`setActiveNode` flips it to the panel, the panel header's ‹ flips it back. The
+desktop collapse/peek machinery is ignored there. Rules that keep it working:
+
+- The panel stays mounted while the nav shows, so its terminals must be told
+  `hidden` (`offscreen` in `MainPanel`), or a pane nobody sees reports itself
+  watched and eats the notifications.
+- Header actions live in the ⋯ menu; the tab row scrolls sideways and keeps the
+  active tab in view.
+- Terminals get a key strip (Esc, Tab, ⇧Tab, ^C, arrows, ⏎) — a phone keyboard
+  has none of them and Claude's TUI needs all of them. Its buttons
+  `preventDefault` on pointer-down so a tap does not dismiss the keyboard.
+- Hover-only controls (pin, a project's +) show under `pointer-coarse:`.
+- Inputs are forced to 16px on phones; below that iOS zooms in on focus and
+  never zooms back (xterm's hidden textarea included).
+- Test at 390×844 with `Emulation.setTouchEmulationEnabled`, which is what makes
+  `pointer: coarse` match.
 
 ## Verifying UI changes
 
