@@ -1,5 +1,6 @@
 import { run as exec, git } from '../../exec.js'
 import { headSha, out, err, prState } from '../lib.js'
+import { diffStat } from './gate.js'
 
 /**
  * PR: push the branch and open the pull request (or a draft). Both are engine
@@ -18,6 +19,26 @@ export default {
     const wt = run.worktree
     if (!wt?.branch) return { pause: 'There is no branch to open a pull request from.' }
     const sha = await headSha(wt.dir)
+
+    // A fix for a teammate's comment is prepared, then waits for me: they are
+    // reading that PR, and an unreviewed push would land under their eyes.
+    // A CI fix is not held — it corrects what I already approved.
+    if (run.pr?.number && run.loop?.kind === 'review' && ctx.repo.ship.fix_push !== 'auto') {
+      const ask = ctx.ask({
+        key: `fix:${sha}:${run.fixEpoch ?? 0}`, type: 'fix',
+        title: `Fix ready to push: ${run.task.title}`,
+        body: `${run.summary?.split('**Follow-up:**').at(-1)?.trim() ?? 'The requested changes are committed locally.'}\n\nPushing adds new commits on top of the PR. Nothing is rebased.`,
+        detail: await diffStat(wt.dir, `origin/${wt.branch}`),
+        choices: [{ id: 'push', label: 'Push' }, { id: 'send-back', label: 'Send back' }, { id: 'take-over', label: 'Take over' }],
+        recommended: 'push',
+      })
+      if (ask.outcome) return ask.outcome
+      // Spent: I took it over from here. Ask again about the tree as handed back.
+      if (ask.answer.choice === 'take-over') { run.fixEpoch = (run.fixEpoch ?? 0) + 1; return { wait: true } }
+      if (ask.answer.choice === 'send-back') {
+        return { fail: { reasons: [ask.answer.note ?? 'The prepared fix was sent back. Re-read the review comments.'] }, uncounted: true }
+      }
+    }
 
     const pushed = await ctx.effect('push', sha, {
       describe: `push ${wt.branch} at ${sha?.slice(0, 8)}`,

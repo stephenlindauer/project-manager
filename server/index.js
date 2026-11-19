@@ -46,6 +46,11 @@ const orch = await createOrchestrator({
     projectPath: (id) => { const p = store.byId.get(id); return p?.isGit ? p.path : null },
     projectPathByName: (name) => store.projects.find((p) => p.isGit && p.name === name)?.path ?? null,
     nodeIdFor: (dir) => idFor(dir),
+    claudeState: (nodeId) => Notify.statusList().find((r) => r.nodeId === nodeId)?.state ?? null,
+    // Takeover: the Claude tab opens on the run's own conversation.
+    openClaude: (nodeId, cwd, sid) => /^[0-9a-f-]{36}$/.test(sid) ? T.prelaunch(nodeId, 'claude', cwd, `${config.claudeCommand} --resume ${sid}`) : false,
+    // Hand-back: the person clicked "hand back", which says this session closes.
+    closeClaude: async (nodeId) => { Notify.forget(nodeId); await T.killSession(nodeId, 'claude'); await run('tmux', ['kill-session', '-t', `=pm-claude-${nodeId}`]) },
   },
 })
 

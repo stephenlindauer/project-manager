@@ -72,6 +72,8 @@ type State = {
   setMode: (mode: 'projects' | 'orch') => void
   setOrchView: (view: 'board' | 'inbox' | 'rules') => void
   openRun: (id: string | null) => void
+  /** After a takeover: go to the run's worktree and open its Claude tab. */
+  continueByHand: (resume: { nodeId: string | null; sid: string | null; started: boolean } | null | undefined) => void
 
   load: () => Promise<void>
   login: (username: string, password: string) => Promise<void>
@@ -238,6 +240,18 @@ export const useStore = create<State>((set, get) => ({
   openRun: (orchRunId) => {
     if (orchRunId) localStorage.setItem('pm:mode', 'orch')
     set(orchRunId ? { orchRunId, mode: 'orch' } : { orchRunId })
+  },
+
+  continueByHand: (resume) => {
+    if (!resume?.nodeId || !get().nodes.some((n) => n.id === resume.nodeId)) return
+    localStorage.setItem('pm:mode', 'projects')
+    set({ mode: 'projects' })
+    get().showNode(resume.nodeId)
+    // The server opened the tab on the run's conversation. If a Claude session
+    // was already there it was left alone, so say how to pick the run up in it.
+    if (!resume.started && resume.sid) {
+      get().notice({ key: `orch-resume:${resume.nodeId}`, title: 'Continue the run here', message: `A Claude session already exists in this worktree. To continue the run's conversation: claude --resume ${resume.sid}`, tone: 'info', nodeId: resume.nodeId, sticky: true })
+    }
   },
 
   load: async () => {

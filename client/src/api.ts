@@ -1,6 +1,6 @@
 import type {
   Changes, CleanupResult, CleanupScan, Node, OrchMeta, OrchRules, OrchRun, OrchRunDetail, OrchState,
-  OrchTranscriptItem, Project, PrsView, Runner, Script, Summary,
+  OrchResume, OrchTranscriptItem, Project, PrsView, Runner, Script, Summary,
 } from './types'
 
 /** Notified whenever a request 401s, so the app can drop back to the login gate. */
@@ -106,9 +106,9 @@ export const orchApi = {
   run: (id: string) => json<OrchRunDetail>(`/api/orch/runs/${id}`),
   transcript: (id: string, n: number, offset = 0) =>
     json<{ offset: number; items: OrchTranscriptItem[]; prompt: string | null; err: string }>(`/api/orch/runs/${id}/sessions/${n}?offset=${offset}`),
-  answer: (runId: string, cardId: string, choice: string, note?: string) =>
-    post<{ ok: boolean }>(`/api/orch/runs/${runId}/cards/${cardId}`, { choice, note }),
+  answer: (runId: string, cardId: string, choice: string, note?: string, items?: Record<string, string>) =>
+    post<{ ok: boolean; resume?: OrchResume }>(`/api/orch/runs/${runId}/cards/${cardId}`, { choice, note, items }),
   allowRefused: (runId: string, index: number) => post<{ ok: boolean }>(`/api/orch/runs/${runId}/refused/${index}/allow`),
-  control: (runId: string, action: 'pause' | 'resume' | 'abandon') =>
-    post<{ ok: boolean }>(`/api/orch/runs/${runId}/control`, { action }),
+  control: (runId: string, action: 'pause' | 'resume' | 'abandon' | 'takeover' | 'handback' | 'release', note?: string) =>
+    post<{ ok: boolean; resume?: OrchResume | null }>(`/api/orch/runs/${runId}/control`, { action, note }),
 }

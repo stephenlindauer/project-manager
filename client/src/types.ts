@@ -345,7 +345,12 @@ export type OrchCard = {
   createdAt: number
   answer: { choice: string; note: string | null; at: number } | null
   rule?: string
+  /** A gate over a record with a list: one choice per item. */
+  items?: { id: string; label: string; blocked: boolean; reasons: string[]; choices: string[]; recommended: string }[]
 }
+
+/** Where to continue a run by hand after taking it over. */
+export type OrchResume = { nodeId: string | null; sid: string | null; started: boolean }
 
 export type OrchState = {
   runs: OrchRun[]

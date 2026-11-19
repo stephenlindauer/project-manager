@@ -1,0 +1,38 @@
+{
+  "session": { "model": null },
+  "resolver": { "enabled": true, "model": null },
+  "reviewers": [
+    { "name": "claude", "runner": "claude", "model": null }
+  ],
+  "limits": { "activeSessions": 3, "fixRounds": 3, "wip": 5 },
+  "sources": {
+    "manual": { "adapter": "manual" }
+  },
+  "pipelines": {
+    "code-change": {
+      "stages": [
+        { "kind": "intake" },
+        {
+          "kind": "record", "name": "plan", "record": "plan",
+          "schema": "schemas/plan.schema.json",
+          "validator": "node validators/plan.js",
+          "prompt": "prompts/plan.md"
+        },
+        {
+          "kind": "gate", "name": "plan-gate", "title": "Plan",
+          "shows": { "record": "plan", "fields": ["problem", "evidence", "done_looks_like", "fix_kind", "failure_mode_prevented"] }
+        },
+        { "kind": "work", "name": "build", "prompt": "prompts/build.md" },
+        { "kind": "verify" },
+        { "kind": "review", "blockAt": "blocking" },
+        { "kind": "pr", "draft": true },
+        {
+          "kind": "gate", "name": "pr-gate", "title": "Pull request", "autoPass": "never", "marksReady": true,
+          "shows": { "explainBack": true, "findings": true, "decisions": true }
+        },
+        { "kind": "watch" },
+        { "kind": "merge" }
+      ]
+    }
+  }
+}
