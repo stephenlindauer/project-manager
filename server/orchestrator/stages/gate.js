@@ -156,6 +156,20 @@ function buildCard(ctx, { key, record, rec, explain, items }) {
     body.push(`Review: ${run.review.fixed ?? 0} blocking finding${run.review.fixed === 1 ? '' : 's'} fixed, ${open.length} left open.`)
     if (open.length) detail.push(`# Findings left open\n${open.map((f) => `[${f.severity}${f.by?.length > 1 ? ', both reviewers' : ''}] ${f.file ?? ''}${f.line ? `:${f.line}` : ''} — ${f.title}\n${f.explanation ?? ''}`).join('\n\n')}`)
   }
+  if (shows.crossCheck && run.crosscheck?.[shows.crossCheck]) {
+    const cc = readJson(run.crosscheck[shows.crossCheck].file) ?? { marked: [], compared: 0 }
+    body.push(cc.marked.length
+      ? `Cross-check: ${cc.marked.length} step${cc.marked.length === 1 ? ' differs' : 's differ'} between the two models (tolerance ${cc.tolerance}×).`
+      : `Cross-check: the two models agree on all ${cc.compared} steps.`)
+    // Only the marked steps, with both values and both sources.
+    if (cc.marked.length) {
+      detail.unshift(`# Steps the two models disagree on\n${cc.marked.map((m) => [
+        `${m.item} / ${m.step} — ${m.why}`,
+        `  first:  ${m.first?.value} (${m.first?.source ?? 'no source'})`,
+        `  second: ${m.second ? `${m.second.value} (${m.second.source ?? 'no source'})` : 'no value'}`,
+      ].join('\n')).join('\n\n')}`)
+    }
+  }
   if (shows.decisions) {
     const decisions = ctx.events().filter((e) => e.type === 'decision')
     if (decisions.length) {

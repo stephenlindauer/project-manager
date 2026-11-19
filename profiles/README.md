@@ -14,7 +14,7 @@ cp -R profiles/solo-ship/. orchestrator/
 | Profile | For |
 | --- | --- |
 | `solo-ship` | Personal repos that ship without review: build, verify, PR, merge, deploy. No gates. |
-| `team-review` | A machine with team review. A plan record and a plan gate before any code; fresh reviewers and a PR gate with an explain-back before the team sees it; then CI and review comments are watched. |
+| `team-review` | A machine with team review and estimate-driven work. `code-change`: a plan record and plan gate before any code, fresh reviewers and a PR gate with an explain-back, CI and review comments watched, then a post-check of predicted against measured. `investigation`: count the pool, sample causes into an evidence record, cross-check the arithmetic with a second model, decide per cause, hand the chosen ones off as code-change runs. |
 | `ci-only` | A solo business repo where CI is the only reviewer. Tasks come from a ClickUp queue, and one existing skill cuts the branch, opens the PR, writes status and watches CI. |
 
 Profiles carry structure and placeholder values only. Real repo names, paths,

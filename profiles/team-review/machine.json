@@ -1,38 +1,176 @@
 {
-  "session": { "model": null },
-  "resolver": { "enabled": true, "model": null },
+  "session": {
+    "model": null
+  },
+  "resolver": {
+    "enabled": true,
+    "model": null
+  },
   "reviewers": [
-    { "name": "claude", "runner": "claude", "model": null }
+    {
+      "name": "claude",
+      "runner": "claude",
+      "model": null
+    },
+    {
+      "name": "second",
+      "runner": "command",
+      "command": "YOUR_SECOND_MODEL_CLI --prompt-file \"$PM_REVIEW_PROMPT\" > \"$PM_REVIEW_OUT\""
+    }
   ],
-  "limits": { "activeSessions": 3, "fixRounds": 3, "wip": 5 },
+  "limits": {
+    "activeSessions": 3,
+    "fixRounds": 3,
+    "wip": 5
+  },
   "sources": {
-    "manual": { "adapter": "manual" }
+    "manual": {
+      "adapter": "manual"
+    }
   },
   "pipelines": {
     "code-change": {
       "stages": [
-        { "kind": "intake" },
         {
-          "kind": "record", "name": "plan", "record": "plan",
+          "kind": "intake"
+        },
+        {
+          "kind": "record",
+          "name": "plan",
+          "record": "plan",
           "schema": "schemas/plan.schema.json",
           "validator": "node validators/plan.js",
           "prompt": "prompts/plan.md"
         },
         {
-          "kind": "gate", "name": "plan-gate", "title": "Plan",
-          "shows": { "record": "plan", "fields": ["problem", "evidence", "done_looks_like", "fix_kind", "failure_mode_prevented"] }
+          "kind": "gate",
+          "name": "plan-gate",
+          "title": "Plan",
+          "shows": {
+            "record": "plan",
+            "fields": [
+              "problem",
+              "evidence",
+              "done_looks_like",
+              "fix_kind",
+              "failure_mode_prevented"
+            ]
+          }
         },
-        { "kind": "work", "name": "build", "prompt": "prompts/build.md" },
-        { "kind": "verify" },
-        { "kind": "review", "blockAt": "blocking" },
-        { "kind": "pr", "draft": true },
         {
-          "kind": "gate", "name": "pr-gate", "title": "Pull request", "autoPass": "never", "marksReady": true,
-          "shows": { "explainBack": true, "findings": true, "decisions": true }
+          "kind": "work",
+          "name": "build",
+          "prompt": "prompts/build.md"
         },
-        { "kind": "watch" },
-        { "kind": "merge" }
+        {
+          "kind": "verify"
+        },
+        {
+          "kind": "review",
+          "blockAt": "blocking"
+        },
+        {
+          "kind": "pr",
+          "draft": true
+        },
+        {
+          "kind": "gate",
+          "name": "pr-gate",
+          "title": "Pull request",
+          "autoPass": "never",
+          "marksReady": true,
+          "shows": {
+            "explainBack": true,
+            "findings": true,
+            "decisions": true
+          }
+        },
+        {
+          "kind": "watch"
+        },
+        {
+          "kind": "merge"
+        },
+        {
+          "kind": "deploy"
+        },
+        {
+          "kind": "post-check",
+          "record": "plan",
+          "waitHours": 24,
+          "threshold": 0.5,
+          "ledger": "ledger/post-checks.jsonl"
+        }
+      ]
+    },
+    "investigation": {
+      "stages": [
+        {
+          "kind": "intake",
+          "branch": false
+        },
+        {
+          "kind": "record",
+          "name": "pool",
+          "record": "pool",
+          "schema": "schemas/pool.schema.json",
+          "prompt": "prompts/pool.md",
+          "area": "example-area"
+        },
+        {
+          "kind": "record",
+          "name": "evidence",
+          "record": "evidence",
+          "schema": "schemas/evidence.schema.json",
+          "validator": "node validators/evidence.js",
+          "prompt": "prompts/evidence.md"
+        },
+        {
+          "kind": "cross-check",
+          "record": "evidence",
+          "stepsIn": "causes",
+          "slot": "second",
+          "tolerance": 1.5
+        },
+        {
+          "kind": "gate",
+          "name": "estimate-gate",
+          "title": "Estimate",
+          "autoPass": "never",
+          "itemChoices": [
+            "build",
+            "park",
+            "drop"
+          ],
+          "shows": {
+            "record": "evidence",
+            "fields": [
+              "question",
+              "pool_total",
+              "window"
+            ],
+            "itemFields": [
+              "share",
+              "low",
+              "high",
+              "traces_read",
+              "basis"
+            ],
+            "crossCheck": "evidence"
+          }
+        },
+        {
+          "kind": "hand-off",
+          "record": "evidence",
+          "choice": "build",
+          "pipeline": "code-change",
+          "ledger": "ledger/causes.jsonl"
+        }
       ]
     }
+  },
+  "notifier": {
+    "command": null,
+    "routes": {}
   }
 }

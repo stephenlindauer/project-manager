@@ -466,6 +466,21 @@ Orchestrator Mode PRD (revision 6). `profiles/README.md` covers setup;
   Claude tab on `claude --resume <sid>` (`terminals.js: prelaunch`, which
   never replaces an existing session). Hand-back requires that session idle,
   closes it — the click is the confirmation — and re-enters at verify.
+- **Reviewer slots** (`slots.js`) serve both `review` and `cross-check`. A
+  `command` slot is any program reading `$PM_REVIEW_PROMPT` and printing
+  JSON; that is how a second model's CLI is used without the app knowing it.
+  Nothing depends on that CLI's hooks. Codex's own headless flags are not
+  wired in or verified here.
+- **Cross-check never shows the second model the first one's numbers** — only
+  item ids and step names, and the record's data references. Code compares
+  per step; the gate shows only the marked ones.
+- **A model-written query is never handed to a shell.** `post-check` reads the
+  plan's `read_with` through a session in the `read` permission set, so only
+  allowlisted read tools run. A machine's own `command` on the stage is the
+  alternative.
+- **The status webhook is fed one merged list** (`index.js: allStatus`):
+  interactive sessions plus runs. It reports a record that vanishes from its
+  list as ended, so feeding it the two halves in turn would flap every run.
 - **Orchestrator mode is an overlay in the client.** The project tree and its
   terminals stay mounted underneath and are told `hidden`, so switching modes
   never reconnects or resizes a tmux pane.

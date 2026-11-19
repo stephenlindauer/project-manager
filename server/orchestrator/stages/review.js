@@ -2,8 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { git } from '../../exec.js'
 import { resolveIn } from '../config.js'
-import { lastJson } from './record.js'
-import { sq } from '../runner.js'
+import { runSlot, slotsFor } from '../slots.js'
 
 /**
  * Review: fresh sessions that never saw the code being written check the diff
@@ -58,24 +57,25 @@ export default {
     const { run, stage, state: st } = ctx
     const wt = run.worktree
     if (!wt) return { pause: 'There is no worktree to review.' }
-    const slots = stage.reviewers ?? ctx.machine.reviewers ?? []
-    const active = slots.length ? slots : [{ name: 'claude', runner: 'claude' }]
+    const active = slotsFor(ctx)
     const from = wt.baseSha ?? wt.base
 
     const prompt = () => reviewPrompt(ctx, from)
     const results = []
     let waiting = false
     for (const slot of active) {
-      const r = slot.runner === 'command'
-        ? await commandReviewer(ctx, slot, prompt)
-        : await ctx.worker(`r-${slot.name}`, { role: `reviewer:${slot.name}`, set: 'read', fresh: true, model: slot.model ?? stage.model, schema: FINDINGS, prompt })
+      const r = await runSlot(ctx, slot, `r-${slot.name}`, {
+        role: `reviewer:${slot.name}`, schema: FINDINGS, prompt, model: stage.model,
+        shape: '{ "findings": [{ "severity", "file", "line", "confidence", "title", "explanation" }], "tests_weakened": [] }',
+      })
       // Start every slot before waiting on any: they review in parallel.
       if (r.outcome) {
         if (!r.outcome.wait) return r.outcome
         waiting = true
         continue
       }
-      results.push({ slot: slot.name, out: r.out ?? { findings: [] } })
+      const o = r.out ?? {}
+      results.push({ slot: slot.name, out: { findings: Array.isArray(o.findings) ? o.findings : [], tests_weakened: o.tests_weakened ?? [] } })
     }
     if (waiting) return { wait: true }
 
@@ -146,30 +146,6 @@ function reviewPrompt(ctx, from) {
 }
 
 const readOr = (f) => { try { return fs.readFileSync(f, 'utf8') } catch { return '' } }
-
-/** A reviewer that is any command: prompt in, findings JSON out. */
-async function commandReviewer(ctx, slot, prompt) {
-  const st = ctx.state
-  const key = `r-${slot.name}`
-  const dir = path.join(ctx.runDir, 'review')
-  fs.mkdirSync(dir, { recursive: true })
-  const round = (ctx.run.review?.rounds ?? 0) + 1
-  const promptFile = path.join(dir, `${slot.name}-${round}.prompt.md`)
-  const outFile = path.join(dir, `${slot.name}-${round}.out.json`)
-  if (!st.j?.[key]) fs.writeFileSync(promptFile, `${prompt()}\n\nPrint your answer as one JSON object: { "findings": [...], "tests_weakened": [...] }.\n`)
-  const j = await ctx.job(key, {
-    cmd: slot.command, timeoutMs: (slot.timeoutMinutes ?? 20) * 60_000,
-    env: { PM_REVIEW_PROMPT: promptFile, PM_REVIEW_OUT: outFile },
-  })
-  if (j.state === 'running') return { outcome: { wait: true } }
-  if (j.state === 'lost') return { outcome: { wait: true } }
-  const out = lastJson(readOr(outFile)) ?? lastJson(readOr(path.join(ctx.runDir, 'jobs', `${st.j[key].n}.log`)))
-  if (j.code !== 0 || !out) {
-    // A reviewer that cannot run must not pass for a clean review.
-    return { outcome: { pause: `Reviewer "${slot.name}" (${sq(slot.command)}) ${j.code !== 0 ? `exited ${j.code}` : 'printed no findings JSON'}:\n\n${j.tail}` } }
-  }
-  return { out: { findings: Array.isArray(out.findings) ? out.findings : [], tests_weakened: out.tests_weakened ?? [] } }
-}
 
 /**
  * One list from several reviewers. Two findings are the same finding when

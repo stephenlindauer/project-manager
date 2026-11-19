@@ -779,14 +779,28 @@ function attachRunner(ws, nodeId, name) {
  * /api/claude-hook reaches it without the route knowing — a failing webhook
  * cannot slow or break a hook.
  */
+/**
+ * Interactive sessions and orchestrator runs as one list. It has to be one:
+ * the webhook reports a record that vanishes from its list as ended, so
+ * feeding it the two halves in turn would flap every run on every hook.
+ * Where both exist for a node (a run I have taken over), the session wins.
+ */
+const allStatus = () => {
+  const mine = Notify.statusList()
+  const have = new Set(mine.map((r) => r.nodeId))
+  return [...mine, ...orch.statusRecords().filter((r) => !have.has(r.nodeId))]
+}
 const statusWebhook = config.statusWebhook && createStatusWebhook(config.statusWebhook, {
-  list: Notify.statusList,
+  list: allStatus,
   lookup: (nodeId) => {
     const hit = store.find(nodeId)
     return hit ? { project: hit.project.name, branch: hit.worktree?.branch ?? null } : null
   },
 })
-if (statusWebhook) Notify.notifications.on('status', statusWebhook.onStatus)
+if (statusWebhook) {
+  Notify.notifications.on('status', () => statusWebhook.onStatus(allStatus()))
+  orch.on('snapshot', () => statusWebhook.onStatus(allStatus()))
+}
 
 // ----------------------------------------------------------------- boot
 

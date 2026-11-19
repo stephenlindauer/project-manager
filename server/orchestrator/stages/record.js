@@ -38,6 +38,13 @@ export default {
     const file = path.join(ctx.runDir, 'records', `${name}.json`)
     fs.mkdirSync(path.dirname(file), { recursive: true })
 
+    // A machine can hold new estimates in an area while an earlier one there
+    // came in below prediction and nobody has written down why.
+    if (stage.area && !st.w) {
+      const held = ctx.blockedAreas().find((b) => b.area === stage.area && b.runId !== run.id)
+      if (held) { st.waitingOn = `the reason for a post-check below prediction in "${stage.area}" (${held.task})`; return { wait: true } }
+    }
+
     const schema = stage.schema ? readJson(resolveIn(ctx.machine, stage.schema)) : null
     if (stage.schema && !schema) return { pause: `The schema for record "${name}" could not be read: ${stage.schema}` }
 
