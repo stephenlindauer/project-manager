@@ -9,7 +9,7 @@ import { WebSocketServer } from 'ws'
 
 import { config } from './config.js'
 import { store } from './store.js'
-import { worktreeDirFor } from './scanner.js'
+import { worktreeDirFor, idFor } from './scanner.js'
 import * as G from './git.js'
 import * as T from './terminals.js'
 import * as Tasks from './tasks.js'
@@ -21,6 +21,7 @@ import * as Ship from './ship.js'
 import * as Trash from './trash.js'
 import * as Cleanup from './cleanup.js'
 import { run } from './exec.js'
+import { createOrchestrator } from './orchestrator/index.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -29,6 +30,23 @@ app.use(express.json({ limit: '2mb' }))
 Auth.loadAuth()
 Notify.loadHookToken()
 const cookieOpts = { secure: config.https.enabled }
+
+/**
+ * Orchestrator mode (server/orchestrator/). Off — an object whose only route
+ * answers `{ enabled: false }` — unless pm.config.json turns it on.
+ */
+const orch = await createOrchestrator({
+  claudeCommand: config.claudeCommand,
+  playSound: Notify.playSound,
+  interactiveWorking: () => Notify.statusList().filter((r) => r.state === 'working').length,
+  app: {
+    git: G, gh: GH, worktreeDirFor,
+    rescan: () => store.rescan(),
+    shipRefresh: () => { Ship.refresh().catch(() => {}) },
+    projectPath: (id) => { const p = store.byId.get(id); return p?.isGit ? p.path : null },
+    nodeIdFor: (dir) => idFor(dir),
+  },
+})
 
 /** Resolve `:id` to a node, or 404. Every node-scoped route funnels through this. */
 function node(req, res) {
@@ -105,6 +123,12 @@ app.post('/api/claude-hook', (req, res) => {
   const body = req.body ?? {}
   const { event, cwd, session } = body
   const str = (v, max) => (typeof v === 'string' ? v.slice(0, max) : null)
+  // A session the orchestrator started carries its run marker. Its events
+  // belong to the run's card: no status record, no toast, no sound.
+  if (body.orchRun) {
+    orch.hook(body)
+    return res.json({ ok: true, delivered: false, reason: 'orchestrator session' })
+  }
   const nodeId = hookNodeId(session, cwd)
   if (!nodeId) return res.json({ ok: true, delivered: false, reason: 'no matching project' })
   const watched = () => T.isWatched(nodeId, 'claude')
@@ -164,6 +188,9 @@ function hookNodeId(session, cwd) {
 app.use('/api', Auth.requireAuth)
 app.use('/events', Auth.requireAuth)
 
+// Behind requireAuth, like everything that can start an agent with a shell.
+app.use('/api', orch.router)
+
 // ---------------------------------------------------------------- meta
 
 app.get('/api/meta', wrap(async (req, res) => {
@@ -172,6 +199,7 @@ app.get('/api/meta', wrap(async (req, res) => {
     terminalBackend: T.backend(),
     ghAvailable: await GH.detectGh(),
     lastScan: store.lastScan,
+    orchestrator: orch.enabled,
   })
 }))
 
@@ -273,6 +301,9 @@ app.delete('/api/nodes/:id/worktree', wrap(async (req, res) => {
     }
   }
 
+  const owner = orch.ownedDirs().get(n.cwd)
+  if (owner) return res.status(409).json({ error: `an orchestrator run (${owner}) owns this worktree — abandon or release the run first` })
+
   const error = await dropWorktree(req.params.id, n, { force })
   // Anything git still refuses (a lock, a tree we could not move) gets the
   // same offer; a failure *with* --force is final.
@@ -328,6 +359,7 @@ async function assessWorktrees(projects, { onlyIds = null } = {}) {
   const claude = new Map(Notify.statusList().map((r) => [r.nodeId, r.state]))
   const tasks = new Set(Tasks.allRunners().filter((r) => r.running).map((r) => r.nodeId))
   const activity = new Map(store.nodes.map((n) => [n.id, n.activityAt]))
+  const owned = orch.ownedDirs()
 
   const targets = projects.flatMap((p, i) => p.worktrees
     .filter((w) => !w.isMain && (!onlyIds || onlyIds.has(w.id)))
@@ -341,6 +373,7 @@ async function assessWorktrees(projects, { onlyIds = null } = {}) {
       openPr: prNodes.has(w.id),
       claudeBusy: busy === 'working' || busy === 'waiting' ? busy : null,
       taskRunning: tasks.has(w.id),
+      orchestrated: owned.has(w.path),
     })
     return {
       nodeId: w.id, projectId: project.id, project: project.name, repoPath: project.path,
@@ -562,6 +595,8 @@ app.get('/events', (req, res) => {
   const onStatus = (list) => send('claude-status', list)
   const onToast = (t) => send('claude-toast', t)
   const onShip = (env) => send('ship-status', env)
+  const onOrch = (snap) => send('orch-state', snap)
+  const onOrchToast = (t) => send('orch-toast', t)
 
   store.on('nodes', onNodes)
   store.on('node', onNode)
@@ -569,11 +604,14 @@ app.get('/events', (req, res) => {
   Notify.notifications.on('status', onStatus)
   Notify.notifications.on('toast', onToast)
   Ship.events.on('status', onShip)
+  orch.on('snapshot', onOrch)
+  orch.on('toast', onOrchToast)
 
   // A page that loads (or reconnects) after a signal was raised still has to
   // learn about it — the sidebar badge is sticky state, not just an event.
   send('claude-status', Notify.statusList())
   send('ship-status', Ship.statusList())
+  if (orch.enabled) send('orch-state', orch.snapshot())
 
   const taskTick = setInterval(() => sendIfChanged('tasks', Tasks.allRunners()), 2000)
   const sessionTick = setInterval(() => sendIfChanged('sessions', T.sessionSummaries()), 2000)
@@ -586,6 +624,8 @@ app.get('/events', (req, res) => {
     Notify.notifications.off('status', onStatus)
     Notify.notifications.off('toast', onToast)
     Ship.events.off('status', onShip)
+    orch.off('snapshot', onOrch)
+    orch.off('toast', onOrchToast)
     clearInterval(taskTick)
     clearInterval(sessionTick)
     clearInterval(heartbeat)
@@ -793,6 +833,11 @@ server.listen(config.port, config.host, async () => {
   const swept = await Trash.sweep(store.projects.map((p) => p.path))
   if (swept) console.log(`[pm] trash      resuming ${swept} interrupted worktree delete${swept === 1 ? '' : 's'}`)
   if (config.gh.ship) Ship.start()
+  if (orch.enabled) {
+    const { live, problems } = orch.start()
+    console.log(`[pm] orchestrator on — ${live} run${live === 1 ? '' : 's'} in flight`)
+    for (const p of problems) console.warn(`[pm] orchestrator: ${p}`)
+  }
   if (statusWebhook) statusWebhook.start()
 })
 

@@ -121,6 +121,10 @@ async function main() {
     // Stop: Claude's closing words, for the "ready" badge's tooltip.
     lastMessage: str(payload.last_assistant_message, 400),
     transcriptPath: str(payload.transcript_path, 400),
+    // Set by the orchestrator on sessions it starts: the server files these
+    // under the run instead of raising a badge or a toast.
+    orchRun: str(process.env.PM_ORCH_RUN, 40),
+    orchSession: str(process.env.PM_ORCH_SESSION, 10),
   })
 
   // Self-signed certs are the norm for the https option here, and this request

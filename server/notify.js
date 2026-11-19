@@ -207,6 +207,8 @@ setInterval(sweepStale, 60_000).unref()
 const MIN_GAP_MS = 1500
 let lastPlayed = 0
 
+export const playSound = (state) => play(state)
+
 function play(state) {
   if (!config.notify.sound) return
   if (os.platform() !== 'darwin') return

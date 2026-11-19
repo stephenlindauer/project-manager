@@ -42,6 +42,7 @@ export function classify(f) {
   if (f.openPr) holds.push('open PR')
   if (f.claudeBusy) holds.push(`Claude is ${f.claudeBusy}`)
   if (f.taskRunning) holds.push('task running')
+  if (f.orchestrated) holds.push('owned by an orchestrator run')
 
   if (f.prunable) return { verdict: 'missing', reason: 'directory is gone', holds: holds.filter((h) => h === 'locked') }
 

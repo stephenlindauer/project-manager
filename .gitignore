@@ -11,3 +11,6 @@ pm.config.json
 .pm-hook-token
 certs/
 .pm-hook-dump.jsonl
+
+# Per-machine orchestrator config, runs and private adapters
+/orchestrator/
