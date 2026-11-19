@@ -28,7 +28,7 @@ export function Toasts() {
   // is worse than one sitting three rows lower.
   return (
     <div
-      className="pointer-events-none fixed right-3 top-[46px] z-[110] flex w-[300px] flex-col gap-2"
+      className="pointer-events-none fixed right-3 top-[46px] z-[110] flex w-[300px] max-w-[calc(100vw-24px)] flex-col gap-2"
       role="status"
       aria-live="polite"
     >

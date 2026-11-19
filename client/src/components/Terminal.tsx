@@ -3,6 +3,7 @@ import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { decodeOsc52, writeClipboard } from '../lib/clipboard'
+import { usePhone } from '../lib/media'
 import { useStore } from '../store'
 import type { SessionKind } from '../types'
 
@@ -114,6 +115,12 @@ const themeFor = (night: boolean) => (night ? XTERM_THEME_NIGHT : XTERM_THEME)
 /** A hidden element measures as zero; anything below this is not a real size. */
 const MIN_COLS = 40
 const MIN_ROWS = 10
+/**
+ * Finger travel, in terminal rows, per wheel report on a touch swipe. tmux
+ * scrolls 5 lines per wheel event, so 2 rows of drag moves the history ~2.5x
+ * the finger: quick to fling through a long conversation, still controllable.
+ */
+const TOUCH_ROWS_PER_WHEEL = 2
 
 /** Reconnect backoff: first retry is quick (server restarts are ~1-2s), capped. */
 const RECONNECT_BASE_MS = 400
@@ -144,6 +151,7 @@ export function Terminal({
   const termRef = useRef<XTerm | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
+  const phone = usePhone()
   // Whether this pane is genuinely on screen — reported to the server so a
   // Claude hook that fires while you are watching doesn't notify you about what
   // is already in front of you. Held in a ref so a reconnect can re-send it.
@@ -211,6 +219,47 @@ export function Terminal({
       if (sel) void writeClipboard(sel)
     }
     host.addEventListener('mouseup', copySelection)
+
+    /*
+      Touch scrolling. With tmux's `mouse on`, the app has mouse tracking
+      enabled, and xterm 5.5 then ignores touch outright (its touch handlers
+      bail when `areMouseEventsActive`) — and its own viewport is empty anyway,
+      because the history lives in tmux. So a swipe on a phone did nothing.
+      Translate vertical drags into synthetic wheel events on xterm's element:
+      its wheel listener reports them to the app in whatever mouse encoding was
+      negotiated, and tmux turns wheel-up into copy-mode scrollback (and leaves
+      it again on scrolling back to the bottom). Without mouse tracking (the
+      raw-pty fallback) xterm's own touch scrolling is left alone.
+    */
+    let touchY: number | null = null
+    let touchAcc = 0
+    const onTouchStart = (e: TouchEvent) => {
+      touchY = e.touches.length === 1 ? e.touches[0].clientY : null
+      touchAcc = 0
+    }
+    const onTouchMove = (e: TouchEvent) => {
+      if (touchY === null || e.touches.length !== 1) return
+      if (term.modes.mouseTrackingMode === 'none') return
+      const t = e.touches[0]
+      touchAcc += t.clientY - touchY
+      touchY = t.clientY
+      e.preventDefault() // the gesture is ours: no page bounce, no tap
+      const step = (host.clientHeight / term.rows) * TOUCH_ROWS_PER_WHEEL
+      const target = term.element?.querySelector('.xterm-screen') ?? term.element
+      while (Math.abs(touchAcc) >= step && target) {
+        const down = touchAcc > 0 // finger moving down = reveal earlier output
+        touchAcc += down ? -step : step
+        target.dispatchEvent(new WheelEvent('wheel', {
+          deltaY: down ? -1 : 1, deltaMode: WheelEvent.DOM_DELTA_LINE,
+          clientX: t.clientX, clientY: t.clientY, bubbles: true, cancelable: true,
+        }))
+      }
+    }
+    const onTouchEnd = () => { touchY = null }
+    host.addEventListener('touchstart', onTouchStart, { passive: true })
+    host.addEventListener('touchmove', onTouchMove, { passive: false })
+    host.addEventListener('touchend', onTouchEnd)
+    host.addEventListener('touchcancel', onTouchEnd)
 
     /** Fit only when the pane is laid out and the result is a plausible size. */
     const fitIfMeasurable = () => {
@@ -320,6 +369,10 @@ export function Terminal({
       disposed = true
       if (reconnectTimer) clearTimeout(reconnectTimer)
       host.removeEventListener('mouseup', copySelection)
+      host.removeEventListener('touchstart', onTouchStart)
+      host.removeEventListener('touchmove', onTouchMove)
+      host.removeEventListener('touchend', onTouchEnd)
+      host.removeEventListener('touchcancel', onTouchEnd)
       oscHandler.dispose()
       ro.disconnect()
       wsRef.current?.close()
@@ -378,11 +431,50 @@ export function Terminal({
     if (termRef.current) termRef.current.options.theme = themeFor(night)
   }, [night, activated])
 
+  /** Raw bytes into the session, as if typed — for the phone key strip. */
+  const sendKeys = (data: string) => {
+    const ws = wsRef.current
+    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data }))
+  }
+
   return (
-    <div
-      ref={hostRef}
-      className="h-full w-full px-2 py-1"
-      style={{ display: hidden ? 'none' : 'block' }}
-    />
+    <div className="flex h-full w-full flex-col" style={{ display: hidden ? 'none' : 'flex' }}>
+      <div ref={hostRef} className="min-h-0 w-full flex-1 px-2 py-1" />
+      {phone && !task && <KeyStrip send={sendKeys} />}
+    </div>
+  )
+}
+
+/**
+ * The keys a phone keyboard does not have, which a TUI cannot do without:
+ * Esc interrupts Claude, arrows and Tab drive its menus, ^C stops a command.
+ * `preventDefault` on pointer-down keeps focus in xterm's textarea, so tapping
+ * a key does not dismiss the on-screen keyboard.
+ */
+const STRIP_KEYS: [label: string, data: string, title: string][] = [
+  ['esc', '\x1b', 'Escape'],
+  ['tab', '\t', 'Tab'],
+  ['⇧tab', '\x1b[Z', 'Shift-Tab'],
+  ['^C', '\x03', 'Ctrl-C'],
+  ['←', '\x1b[D', 'Left'],
+  ['↑', '\x1b[A', 'Up'],
+  ['↓', '\x1b[B', 'Down'],
+  ['→', '\x1b[C', 'Right'],
+  ['⏎', '\r', 'Enter'],
+]
+
+function KeyStrip({ send }: { send: (data: string) => void }) {
+  return (
+    <div className="no-scrollbar flex shrink-0 gap-1 overflow-x-auto border-t border-line bg-panel px-1.5 py-1.5">
+      {STRIP_KEYS.map(([label, data, title]) => (
+        <button
+          key={title}
+          title={title}
+          onPointerDown={(e) => e.preventDefault()}
+          onClick={() => send(data)}
+          className="min-w-[42px] shrink-0 rounded border border-line bg-panel-2 px-2 py-2 font-mono text-[13px] leading-none text-ink active:border-accent active:text-accent"
+        >{label}</button>
+      ))}
+    </div>
   )
 }

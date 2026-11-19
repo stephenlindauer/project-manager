@@ -26,7 +26,7 @@ export function Login() {
     <div className="grid h-full place-items-center">
       <form
         onSubmit={submit}
-        className="w-[320px] rounded-xl border border-accent/40 bg-panel p-6 shadow-[0_0_40px_-8px_var(--color-accent)]"
+        className="w-[320px] max-w-[calc(100vw-32px)] rounded-xl border border-accent/40 bg-panel p-6 shadow-[0_0_40px_-8px_var(--color-accent)]"
       >
         <h1 className="mb-1 text-center text-[13px] font-semibold uppercase tracking-[0.18em] text-accent glow-text">
           ProjectManager

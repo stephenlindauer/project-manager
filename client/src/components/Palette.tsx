@@ -57,7 +57,7 @@ export function Palette() {
       onClick={() => setOpen(false)}
     >
       <div
-        className="w-[560px] overflow-hidden rounded-xl border border-accent/40 bg-panel shadow-[0_0_40px_-8px_var(--color-accent)]"
+        className="w-[560px] max-w-[calc(100vw-32px)] overflow-hidden rounded-xl border border-accent/40 bg-panel shadow-[0_0_40px_-8px_var(--color-accent)]"
         onClick={(e) => e.stopPropagation()}
       >
         <input

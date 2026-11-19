@@ -72,6 +72,26 @@ html, body, #root {
   margin: 0;
 }
 
+/* A phone's browser chrome grows and shrinks; `dvh` tracks what is actually
+   visible, so the bottom of the panel (and the terminal key strip) is never
+   under the toolbar. The safe-area insets keep it clear of the notch and the
+   home indicator when it runs as an installed web app. */
+#root {
+  height: 100dvh;
+  box-sizing: border-box;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+/* iOS zooms the page into any focused field under 16px and never zooms back.
+   xterm's hidden textarea counts, so the terminal would zoom too. */
+@media (max-width: 47.999rem) {
+  input, select, textarea { font-size: 16px !important; }
+}
+
+/* Sideways-scrolling strips (the phone tab row, the terminal key strip). */
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
 body {
   background: var(--color-bg);
   color: var(--color-ink);

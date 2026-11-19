@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { isActiveNode, sectionOf, useStore } from '../store'
 import { ago } from '../lib/time'
+import { usePhone } from '../lib/media'
 import type { AttentionState, ClaudeStatus, Node, Runner, ShipOrphan, ShipStatus, ShipVerdict } from '../types'
 import { StatusBadges } from './StatusBadges'
 
@@ -87,7 +88,11 @@ export function Sidebar() {
     .filter((s) => s.attention)
     .sort((a, b) => rankShip(b.verdict) - rankShip(a.verdict) || (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '')), [ship])
   const shipOrphans = useMemo(() => shipMeta.orphans.filter((o) => o.attention), [shipMeta.orphans])
-  const collapsed = useStore((s) => s.navCollapsed)
+  // A phone has no room for a rail or a peek: the nav is a full screen of its
+  // own (see `phonePane`), so the desktop collapse state does not apply.
+  const phone = usePhone()
+  const hiddenOnPhone = useStore((s) => phone && s.phonePane === 'panel')
+  const collapsed = useStore((s) => s.navCollapsed) && !phone
   const peek = useStore((s) => s.navPeek)
   const toggleNav = useStore((s) => s.toggleNav)
   const collapsedProjects = useStore((s) => s.collapsedProjects)
@@ -106,7 +111,7 @@ export function Sidebar() {
 
   return (
     <div
-      className={`relative z-30 h-full shrink-0 ${collapsed ? RAIL : 'w-[300px]'}`}
+      className={`relative z-30 h-full shrink-0 ${phone ? 'w-full' : collapsed ? RAIL : 'w-[300px]'} ${hiddenOnPhone ? 'hidden' : ''}`}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
@@ -118,7 +123,7 @@ export function Sidebar() {
 
       <aside
         className={[
-          'flex h-full w-[300px] flex-col border-r border-line bg-panel',
+          'flex h-full w-[300px] flex-col border-r border-line bg-panel max-md:w-full max-md:border-r-0',
           // Only the positioning changes between states; the box does not.
           collapsed ? 'absolute left-0 top-0 z-30 transition-transform duration-150' : 'shrink-0',
           collapsed && !shown ? '-translate-x-full' : 'translate-x-0',
@@ -128,7 +133,7 @@ export function Sidebar() {
         aria-hidden={collapsed && !shown}
         inert={collapsed && !shown ? true : undefined}
       >
-      <header className="flex items-center gap-2 border-b border-line px-4 py-3">
+      <header className="flex items-center gap-2 border-b border-line px-4 py-3 pointer-coarse:[&>button]:px-2.5 pointer-coarse:[&>button]:py-1.5 pointer-coarse:[&>button]:text-[13px]">
         <span className="text-[12px] font-semibold uppercase tracking-[0.16em] text-accent glow-text">
           Projects
         </span>
@@ -159,7 +164,7 @@ export function Sidebar() {
         >↻</button>
         <button
           onClick={toggleNav}
-          className="rounded border border-line px-1.5 py-0.5 text-[10px] text-muted hover:border-accent hover:text-ink"
+          className="rounded border max-md:hidden border-line px-1.5 py-0.5 text-[10px] text-muted hover:border-accent hover:text-ink"
           title={collapsed ? 'Pin sidebar open (⌘B)' : 'Collapse sidebar (⌘B)'}
         >{collapsed ? '»' : '«'}</button>
       </header>
@@ -234,7 +239,7 @@ export function Sidebar() {
         ))}
       </nav>
 
-      <footer className="border-t border-line px-4 py-2 text-[11px] text-muted">
+      <footer className="border-t border-line px-4 py-2 text-[11px] text-muted max-md:hidden">
         <kbd className="text-accent">⌥↑↓</kbd> project · <kbd className="text-accent">⌥←→</kbd> tab
         · <kbd className="text-accent">⌘B</kbd> nav
       </footer>
@@ -409,7 +414,7 @@ function ProjectLabel({ name, count, onNewBranch, onToggle, folded, holdsActive,
       {runners.length > 0 && <span className="min-w-0 shrink"><RunnerBadge runners={runners} /></span>}
       <button
         onClick={(e) => { e.stopPropagation(); onNewBranch() }}
-        className="ml-auto shrink-0 text-muted opacity-0 transition-opacity hover:text-accent group-hover:opacity-100"
+        className="ml-auto shrink-0 text-muted opacity-0 transition-opacity hover:text-accent group-hover:opacity-100 pointer-coarse:px-2 pointer-coarse:text-[16px] pointer-coarse:opacity-100"
         title="New branch worktree"
       >+</button>
     </div>
@@ -637,7 +642,8 @@ function NodeRow({
             onClick={(e) => { e.stopPropagation(); onTogglePin() }}
             className={[
               'transition-opacity hover:text-accent',
-              pinned ? 'text-ink/70' : 'text-muted opacity-0 group-hover:opacity-100',
+              // No hover on touch, so an unpinned pin stays faintly visible there.
+              pinned ? 'text-ink/70' : 'text-muted opacity-0 group-hover:opacity-100 pointer-coarse:opacity-40',
             ].join(' ')}
             title={pinned ? 'Unpin worktree' : 'Pin to top of project'}
             aria-pressed={pinned}

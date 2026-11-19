@@ -131,11 +131,11 @@ export function SummaryTab({ node }: { node: Node }) {
                     <div key={w.path} className="flex items-center gap-2">
                       <button
                         onClick={() => target && setActiveNode(target.id)}
-                        className="font-mono text-[12px] text-accent hover:underline disabled:text-muted disabled:no-underline"
+                        className="min-w-0 truncate text-left font-mono text-[12px] text-accent hover:underline disabled:text-muted disabled:no-underline"
                         disabled={!target}
                       >{w.branch ?? w.name}</button>
-                      {w.isMain && <span className="text-[10px] text-muted">main</span>}
-                      <span className="truncate font-mono text-[10px] text-muted/70">{w.path}</span>
+                      {w.isMain && <span className="shrink-0 text-[10px] text-muted">main</span>}
+                      <span className="truncate font-mono text-[10px] text-muted/70 max-md:hidden">{w.path}</span>
                       <button
                         onClick={() => api.openInEditor(w.path)}
                         title={`Open ${w.path} in VS Code`}
