@@ -38,7 +38,8 @@ export function MainPanel({ node }: { node: Node }) {
   // Its terminals must hear that as hidden, or a pane nobody can see reports
   // itself watched and swallows the notifications meant for you.
   const phone = usePhone()
-  const offscreen = useStore((s) => phone && s.phonePane === 'nav')
+  // Orchestrator mode covers this panel the same way: mounted, but not seen.
+  const offscreen = useStore((s) => (phone && s.phonePane === 'nav') || (s.mode === 'orch' && Boolean(s.meta?.orchestrator)))
   const setPhonePane = useStore((s) => s.setPhonePane)
   const [menuOpen, setMenuOpen] = useState(false)
   // The phone tab row scrolls sideways; keep the selected tab in it, including

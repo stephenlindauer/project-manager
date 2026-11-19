@@ -1,0 +1,10 @@
+{
+  "pipeline": "ship",
+  "verify": ["npm test"],
+  "ship": {
+    "merge": { "by": "app", "method": "squash" },
+    "approvals": 0,
+    "ci": "required",
+    "deploy": { "by": "app", "cmd": null, "check": null, "pull": false }
+  }
+}

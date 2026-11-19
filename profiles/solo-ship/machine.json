@@ -1,0 +1,16 @@
+{
+  "session": { "model": null },
+  "limits": { "activeSessions": 3, "fixRounds": 3, "wip": 5 },
+  "pipelines": {
+    "ship": {
+      "stages": [
+        { "kind": "intake" },
+        { "kind": "work", "name": "build" },
+        { "kind": "verify" },
+        { "kind": "pr" },
+        { "kind": "merge" },
+        { "kind": "deploy" }
+      ]
+    }
+  }
+}

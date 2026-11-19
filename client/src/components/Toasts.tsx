@@ -20,6 +20,7 @@ export function Toasts() {
   const showNode = useStore((s) => s.showNode)
   const setActiveNode = useStore((s) => s.setActiveNode)
   const dismissToast = useStore((s) => s.dismissToast)
+  const openRun = useStore((s) => s.openRun)
 
   if (!toasts.length) return null
 
@@ -38,6 +39,8 @@ export function Toasts() {
           toast={t}
           node={nodes.find((n) => n.id === t.nodeId) ?? null}
           onOpen={() => {
+            // An orchestrator notice opens the run it is about.
+            if (t.runId) { openRun(t.runId); dismissToast(t.id); return }
             if (!t.nodeId) return
             // A Claude signal opens the Claude pane; a notice just selects the node.
             if (t.state) showNode(t.nodeId); else setActiveNode(t.nodeId)
@@ -61,7 +64,7 @@ function ToastCard({ toast, node, onOpen, onDismiss }: {
   const waiting = toast.state === 'waiting'
   const tone = toast.state ? 'attn' : (toast.tone ?? 'info')
   const heading = toast.state ? ATTENTION_LABEL[toast.state] : (toast.title ?? '')
-  const openable = Boolean(toast.nodeId && node)
+  const openable = Boolean((toast.nodeId && node) || toast.runId)
   const color = { attn: 'text-attn', ok: 'text-ok', bad: 'text-bad', info: 'text-accent' }[tone]
   const bar = { attn: 'bg-attn', ok: 'bg-ok', bad: 'bg-bad', info: 'bg-accent' }[tone]
   const hover = { attn: 'hover:border-attn', ok: 'hover:border-ok', bad: 'hover:border-bad', info: 'hover:border-accent' }[tone]
@@ -72,7 +75,7 @@ function ToastCard({ toast, node, onOpen, onDismiss }: {
       role={openable ? 'button' : undefined}
       tabIndex={openable ? 0 : undefined}
       onKeyDown={(e) => { if (openable && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onOpen() } }}
-      title={openable ? 'Open this worktree' : undefined}
+      title={openable ? (toast.runId ? 'Open this run' : 'Open this worktree') : undefined}
       className={[
         'pointer-events-auto cursor-default overflow-hidden rounded border bg-panel/95 backdrop-blur-sm',
         'shadow-[0_8px_28px_rgba(0,0,0,0.6)] transition-colors',

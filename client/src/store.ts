@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { api, authApi, setUnauthorizedHandler } from './api'
-import type { Agent, ClaudeStatus, Node, Project, Runner, SessionInfo, ShipEnvelope, ShipStatus, TabId, Toast } from './types'
+import type { Agent, ClaudeStatus, Node, OrchState, Project, Runner, SessionInfo, ShipEnvelope, ShipStatus, TabId, Toast } from './types'
 
 export const TABS: { id: TabId; label: string; hint: string }[] = [
   { id: 'summary', label: 'Summary', hint: 'Project overview and git state' },
@@ -63,7 +63,15 @@ type State = {
   loading: boolean
   /** null = auth state unknown; true = login screen required; false = past the gate. */
   needsLogin: boolean | null
-  meta: { projectsRoot: string; terminalBackend: string; ghAvailable: boolean } | null
+  meta: { projectsRoot: string; terminalBackend: string; ghAvailable: boolean; orchestrator?: boolean } | null
+  /** Which top-level mode is showing. Orchestrator mode is an overlay: the project tree and its terminals stay mounted underneath. */
+  mode: 'projects' | 'orch'
+  orch: OrchState | null
+  orchView: 'board' | 'inbox' | 'rules'
+  orchRunId: string | null
+  setMode: (mode: 'projects' | 'orch') => void
+  setOrchView: (view: 'board' | 'inbox' | 'rules') => void
+  openRun: (id: string | null) => void
 
   load: () => Promise<void>
   login: (username: string, password: string) => Promise<void>
@@ -221,6 +229,16 @@ export const useStore = create<State>((set, get) => ({
   loading: true,
   needsLogin: null,
   meta: null,
+  mode: localStorage.getItem('pm:mode') === 'orch' ? 'orch' : 'projects',
+  orch: null,
+  orchView: 'board',
+  orchRunId: null,
+  setMode: (mode) => { localStorage.setItem('pm:mode', mode); set({ mode }) },
+  setOrchView: (orchView) => set({ orchView, orchRunId: null }),
+  openRun: (orchRunId) => {
+    if (orchRunId) localStorage.setItem('pm:mode', 'orch')
+    set(orchRunId ? { orchRunId, mode: 'orch' } : { orchRunId })
+  },
 
   load: async () => {
     // A 401 anywhere (expired session, etc.) bounces the whole app to login.
@@ -488,6 +506,17 @@ function connectEvents(set: (p: Partial<State>) => void, get: () => State) {
   es.addEventListener('ship-status', (e) => {
     const { nodes, ...shipMeta } = JSON.parse((e as MessageEvent).data) as ShipEnvelope
     set({ ship: Object.fromEntries(nodes.map((s) => [s.nodeId, s])), shipMeta })
+  })
+
+  es.addEventListener('orch-state', (e) => {
+    set({ orch: JSON.parse((e as MessageEvent).data) as OrchState })
+  })
+  es.addEventListener('orch-toast', (e) => {
+    const t = JSON.parse((e as MessageEvent).data) as { id: string; runId: string; event: string; title: string; task: string; at: number }
+    pushToast(set, get, {
+      id: t.id, key: `orch:${t.runId}`, nodeId: null, runId: t.runId, at: t.at,
+      title: t.title, message: t.task, tone: t.event === 'run-done' ? 'ok' : 'attn',
+    }, false)
   })
 
   es.addEventListener('claude-toast', (e) => {

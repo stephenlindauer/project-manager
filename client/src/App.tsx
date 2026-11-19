@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { CleanupDialog } from './components/CleanupDialog'
 import { Login } from './components/Login'
+import { Orchestrator } from './components/orch/Orchestrator'
 import { MainPanel } from './components/MainPanel'
 import { NewBranchDialog } from './components/NewBranchDialog'
 import { Palette } from './components/Palette'
@@ -14,6 +15,7 @@ export default function App() {
   const load = useStore((s) => s.load)
   const node = useActiveNode()
   const meta = useStore((s) => s.meta)
+  const orchMode = useStore((s) => s.mode === 'orch' && Boolean(s.meta?.orchestrator))
 
   useEffect(() => { load().catch((e) => console.error(e)) }, [load])
   useGlobalShortcuts()
@@ -36,6 +38,7 @@ export default function App() {
           No projects found under {meta?.projectsRoot}
         </div>
       )}
+      {orchMode && <Orchestrator />}
       <Palette />
       <NewBranchDialog />
       <CleanupDialog />
@@ -75,6 +78,9 @@ function useGlobalShortcuts() {
         return
       }
       if (!e.altKey || e.metaKey || e.ctrlKey) return
+      // The project tree is covered in orchestrator mode; moving its selection
+      // from under the overlay would be invisible.
+      if (useStore.getState().mode === 'orch' && useStore.getState().meta?.orchestrator) return
 
       switch (e.code) {
         case 'ArrowDown': e.preventDefault(); moveNode(1); break

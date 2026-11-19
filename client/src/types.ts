@@ -188,6 +188,8 @@ export type Toast = {
   message: string | null
   at: number
   leaving?: boolean
+  /** An orchestrator notice: clicking it opens that run. */
+  runId?: string
 }
 
 export type PullRequest = {
@@ -296,4 +298,102 @@ export type CleanupResult = {
   ok: boolean
   error: string | null
   branchDeleted?: boolean
+}
+
+// ------------------------------------------------------------ orchestrator
+
+export type OrchRunState = 'active' | 'waiting' | 'paused' | 'held' | 'done' | 'abandoned' | 'released'
+
+export type OrchRun = {
+  id: string
+  state: OrchRunState
+  createdAt: number
+  updatedAt: number
+  endedAt: number | null
+  task: { source: string; id: string | null; title: string; url: string | null; type: string | null; ref: string; untrusted: number }
+  repoName: string
+  repoPath: string
+  pipeline: string
+  stages: { id: string; kind: string }[]
+  stageIndex: number
+  stageId: string | null
+  /** What it is doing or waiting on right now, in a few words. */
+  note: string | null
+  working: number
+  attempts: number
+  spend: { tokens: number; usd: number }
+  pr: { number: number | null; url: string } | null
+  worktree: { dir: string; branch: string | null; base: string } | null
+  nodeId: string | null
+  cards: number
+  blocking: number
+}
+
+export type OrchCard = {
+  id: string
+  key: string
+  runId: string
+  stageId: string | null
+  type: 'gate' | 'question' | 'permission' | 'paused' | 'effect' | 'fix' | string
+  title: string
+  body: string
+  detail?: string | null
+  choices: { id: string; label: string }[]
+  recommended: string | null
+  freeText?: boolean
+  blocking: boolean
+  createdAt: number
+  answer: { choice: string; note: string | null; at: number } | null
+  rule?: string
+}
+
+export type OrchState = {
+  runs: OrchRun[]
+  inbox: OrchCard[]
+  limits: { running: number; wip: number; hasSlot: boolean; max: { activeSessions: number | null; wip: number | null; fixRounds: number | null; spendPerRun: number | null } }
+}
+
+export type OrchSession = {
+  n: number; sid: string; role: string; stageId: string; set: string; resumed: boolean
+  status: 'running' | 'finished' | 'failed' | 'vanished' | 'stopped'
+  startedAt: number; endedAt: number | null; tokens: number; usd: number; activity: string | null
+}
+
+export type OrchEvent = { at: number; type: string; stage?: string; [k: string]: unknown }
+
+export type OrchRunDetail = OrchRun & {
+  sessions: OrchSession[]
+  inbox: OrchCard[]
+  attemptsByStage: Record<string, number>
+  stageState: Record<string, { waitingOn: string | null; summary: string | null }>
+  summary: string | null
+  brief: string | null
+  events: OrchEvent[]
+  records: { name: string; content: string | null }[]
+}
+
+export type OrchTranscriptItem =
+  | { kind: 'text'; text: string }
+  | { kind: 'tool'; name: string; input: string }
+  | { kind: 'error'; text: string }
+  | { kind: 'result'; text: string; status: string }
+
+export type OrchMeta = {
+  enabled: boolean
+  errors?: string[]
+  sources?: { name: string; adapter: string; queue: boolean }[]
+  pipelines?: string[]
+}
+
+type Provenance = Record<string, string>
+export type OrchRules = {
+  dir: string
+  errors: string[]
+  machine: { values: Record<string, unknown>; provenance: Provenance }
+  repo: { name: string; values: Record<string, unknown>; provenance: Provenance } | null
+  pipelines: { name: string; errors: string[]; origin: string | null; stages: { id: string; kind: string; gate: boolean; skill: string | null }[]; owners: Record<string, string[]> }[]
+  permissionSets: Record<string, { allow?: string[]; deny?: string[]; error?: string }>
+  stages: { name: string; origin: string | null; wraps: string | null; error: string | null }[]
+  sources: { name: string; origin: string | null; wraps: string | null; error: string | null }[]
+  checks: { name: string; origin: string | null; wraps: string | null; error: string | null }[]
 }
