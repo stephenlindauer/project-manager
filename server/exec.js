@@ -45,7 +45,12 @@ function describe(err, cmd, timeout) {
  * server and test runner launched from the Tasks tab inherited it, so config
  * loaders that key on it thought they were deployed.
  */
-const PRIVATE_ENV = ['NODE_ENV', 'PM_SERVE_DIST', 'XPC_SERVICE_NAME', 'OSLogRateLimit']
+const PRIVATE_ENV = [
+  'NODE_ENV', 'PM_SERVE_DIST', 'XPC_SERVICE_NAME', 'OSLogRateLimit',
+  // The orchestrator's own switches. A worker running this repo's tests
+  // inherited PM_ORCH=1 once, and a test of "no config means off" failed.
+  'PM_ORCH', 'PM_ORCH_DIR',
+]
 export function childEnv(extra = {}) {
   const env = { ...process.env, ...extra }
   for (const k of PRIVATE_ENV) delete env[k]

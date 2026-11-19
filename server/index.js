@@ -44,6 +44,7 @@ const orch = await createOrchestrator({
     rescan: () => store.rescan(),
     shipRefresh: () => { Ship.refresh().catch(() => {}) },
     projectPath: (id) => { const p = store.byId.get(id); return p?.isGit ? p.path : null },
+    projectPathByName: (name) => store.projects.find((p) => p.isGit && p.name === name)?.path ?? null,
     nodeIdFor: (dir) => idFor(dir),
   },
 })

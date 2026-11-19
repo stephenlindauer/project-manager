@@ -63,6 +63,8 @@ export const APP_DEFAULTS = {
   notifier: { routes: {} },
   retentionDays: 30,
   tickMs: 3000,
+  /** How often each repo's task queue is read. */
+  queuePollSeconds: 120,
   /** Price table for showing dollars: { "<model>": { in: usdPerMTok, out: usdPerMTok } }. */
   prices: null,
 }

@@ -108,6 +108,7 @@ export const orchApi = {
     json<{ offset: number; items: OrchTranscriptItem[]; prompt: string | null; err: string }>(`/api/orch/runs/${id}/sessions/${n}?offset=${offset}`),
   answer: (runId: string, cardId: string, choice: string, note?: string) =>
     post<{ ok: boolean }>(`/api/orch/runs/${runId}/cards/${cardId}`, { choice, note }),
+  allowRefused: (runId: string, index: number) => post<{ ok: boolean }>(`/api/orch/runs/${runId}/refused/${index}/allow`),
   control: (runId: string, action: 'pause' | 'resume' | 'abandon') =>
     post<{ ok: boolean }>(`/api/orch/runs/${runId}/control`, { action }),
 }

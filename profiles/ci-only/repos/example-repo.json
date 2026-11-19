@@ -1,0 +1,12 @@
+{
+  "source": "clickup",
+  "pipeline": "ship",
+  "queue": { "listId": "YOUR_LIST_ID" },
+  "ship": {
+    "merge": { "by": "github-auto-merge", "method": "merge" },
+    "approvals": 0,
+    "ci": "required",
+    "stacks": "chained",
+    "stackMerge": "collapse"
+  }
+}

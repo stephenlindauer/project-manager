@@ -1,0 +1,33 @@
+{
+  "sources": {
+    "clickup": {
+      "adapter": "clickup",
+      "apiKeyFile": "~/.config/clickup-api-key",
+      "teamId": "YOUR_WORKSPACE_ID",
+      "queue": { "status": "ready for agent" },
+      "writes": true,
+      "statusSync": false,
+      "comments": false
+    }
+  },
+  "pipelines": {
+    "ship": {
+      "stages": [
+        { "kind": "intake", "branch": false },
+        {
+          "kind": "work",
+          "name": "ship-skill",
+          "skill": "your-ship-skill",
+          "owns": ["branch", "status", "pr", "ci"],
+          "allow": [
+            "Bash(git checkout:*)", "Bash(git switch:*)", "Bash(git fetch:*)", "Bash(git rebase:*)",
+            "Bash(git push:*)", "Bash(gh pr create:*)", "Bash(gh pr merge:*)", "Bash(gh pr ready:*)",
+            "Bash(gh pr edit:*)", "Bash(gh pr comment:*)", "Bash(gh run rerun:*)", "Bash(gh run watch:*)"
+          ],
+          "checks": [{ "pr": "exists" }]
+        },
+        { "kind": "merge", "waitOnly": true }
+      ]
+    }
+  }
+}

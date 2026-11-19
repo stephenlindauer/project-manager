@@ -159,6 +159,7 @@ export function createEngine({ machine, kinds, sources, checks = new Map(), stor
     log(run, { type: 'created', pipeline: name, task: run.task })
     runs.set(run.id, run)
     events.emit('change', run)
+    lifecycle(run, 'started')
     kick()
     return run
   }
@@ -169,6 +170,33 @@ export function createEngine({ machine, kinds, sources, checks = new Map(), stor
     log(run, { type: state, reason: reason ?? null })
     changed(run)
     if (state === 'done') notify('run-done', { run })
+    if (state === 'done' || state === 'abandoned') lifecycle(run, state)
+  }
+
+  /**
+   * Tell the task source something happened (started, pr, merged, done), for
+   * a tracker with writes on. It never holds a run up: a write that fails is
+   * logged, and one interrupted by a restart is skipped and noted rather than
+   * sent a second time — a duplicate comment on a real tracker is worse than
+   * a missing one.
+   */
+  function lifecycle(run, type, extra = {}) {
+    if (!deps.sourceWrite) return
+    const s = store.effectState(run.id, 'source-write', type)
+    if (s.state === 'done') return
+    if (s.state === 'open') {
+      log(run, { type: 'source-write-skipped', event: type, reason: 'interrupted by a restart; not repeated' })
+      log(run, { type: 'result', effect: 'source-write', key: type, value: 'skipped' })
+      return
+    }
+    log(run, { type: 'intent', effect: 'source-write', key: type })
+    Promise.resolve()
+      .then(() => deps.sourceWrite(run, { type, ...extra }))
+      .then((value) => log(run, { type: 'result', effect: 'source-write', key: type, value: value ?? null }))
+      .catch((err) => {
+        log(run, { type: 'intent-void', effect: 'source-write', key: type, error: String(err?.message ?? err) })
+        log(run, { type: 'error', message: `tracker write "${type}" failed: ${err?.message ?? err}` })
+      })
   }
 
   // ------------------------------------------------------------- inbox
@@ -235,6 +263,17 @@ export function createEngine({ machine, kinds, sources, checks = new Map(), stor
     }
   }
 
+  /** "Allow always" for a call a worker was refused and got past, from the run's page. */
+  async function allowRefused(runId, index) {
+    const run = runs.get(runId)
+    const r = run?.refused?.[index]
+    if (!r) throw new Error('unknown refused call')
+    await deps.allowAlways?.(r.set, r.rule)
+    r.allowed = true
+    log(run, { type: 'allow-always', set: r.set, rule: r.rule })
+    changed(run)
+  }
+
   // ------------------------------------------------------------ jumping
 
   /** Go (back) to a stage: everything from it to here runs again, with `feedback` for its worker. */
@@ -293,6 +332,8 @@ export function createEngine({ machine, kinds, sources, checks = new Map(), stor
 
         if (outcome.done) {
           log(run, { type: 'stage-done', stage: stage.id, note: outcome.note ?? null })
+          if (stage.kind === 'pr' && run.pr) lifecycle(run, 'pr', { message: `PR opened: ${run.pr.url}` })
+          if (stage.kind === 'merge') lifecycle(run, 'merged', { message: `Merged: ${run.pr?.url ?? ''}`.trim() })
           run.stageIndex++
           store.save(run)
           continue
@@ -521,19 +562,26 @@ export function createEngine({ machine, kinds, sources, checks = new Map(), stor
     log(run, { type: 'session-end', stage: stage.id, n: w.n, status: out.status ?? null, summary: out.summary ?? null, tokens: t.tokens })
     for (const d of out.decisions ?? []) log(run, { type: 'decision', stage: stage.id, by: role, ...d })
 
-    // Every refused call becomes a permission card. It only blocks the run
-    // when the worker said it could not go on without it.
+    // A refused call only becomes a card when the worker could not go on
+    // without it. The ones it got past are logged and shown on the run — a
+    // card for each would bring back the confirmations this design removes
+    // (the first real run raised four for harmless compound reads).
     const blocked = out.status === 'blocked'
     const cards = []
     for (const d of t.denials) {
       const rule = ruleFor(d)
+      log(run, { type: 'refused', stage: stage.id, by: role, set, rule, blocked })
+      if (!blocked) {
+        ;(run.refused ??= []).push({ stageId: stage.id, set, rule, at: Date.now() })
+        continue
+      }
       const card = raise(run, stage, {
         key: `perm:${stage.id}:${rule}`,
         type: 'permission',
-        blocking: blocked,
-        title: `Refused: ${rule}`,
-        body: `The ${role} in ${stage.id} tried a call that its "${set}" permission set does not allow.` +
-          (blocked ? `\n\nIt could not continue: ${out.blocked_on ?? out.summary ?? ''}` : '\n\nIt carried on without it.'),
+        title: `Refused: ${rule.slice(0, 160)}`,
+        body: `The ${role} in ${stage.id} tried a call that its "${set}" permission set does not allow, and could not continue: ` +
+          `${out.blocked_on ?? out.summary ?? ''}`,
+        detail: rule,
         rule, set,
         choices: [
           { id: 'once', label: 'Allow once' },
@@ -585,6 +633,26 @@ export function createEngine({ machine, kinds, sources, checks = new Map(), stor
 
   const readOr = (file) => { try { return fs.readFileSync(file, 'utf8') } catch { return '' } }
 
+  /**
+   * What a worker needs from a failed command. The tail alone is often the
+   * wrong end: a test runner prints its failure early and a page of passing
+   * lines after it. So: the lines that look like failures, with a little
+   * context, then the tail, then the path to the whole log.
+   */
+  function failureExcerpt(text, file) {
+    const lines = text.split('\n')
+    const hits = new Set()
+    lines.forEach((l, i) => {
+      if (/^not ok\b|\b(error|failed|failure|exception|assert)/i.test(l) && !/^ok\b|\b0 (failed|errors?)\b|# fail 0/.test(l)) {
+        for (let k = Math.max(0, i - 2); k <= Math.min(lines.length - 1, i + 8); k++) hits.add(k)
+      }
+    })
+    const picked = [...hits].sort((a, b) => a - b).slice(0, 80).map((i) => lines[i]).join('\n')
+    const tailText = lines.slice(-25).join('\n')
+    return [picked && `Failing lines:\n${picked.slice(0, 4000)}`, `Last lines:\n${tailText.slice(-1500)}`, `Full output: ${file}`]
+      .filter(Boolean).join('\n\n')
+  }
+
   // --------------------------------------------------------------- jobs
 
   /**
@@ -625,7 +693,7 @@ export function createEngine({ machine, kinds, sources, checks = new Map(), stor
       }
     }
     j.code = code
-    j.tail = runner.tail(files.log, 3000)
+    j.tail = code === 0 ? runner.tail(files.log, 1500) : failureExcerpt(readOr(files.log), files.log)
     ctx.log('job-end', { key, cmd, code })
     store.save(run)
     return { state: 'done', code, tail: j.tail }
@@ -772,7 +840,7 @@ export function createEngine({ machine, kinds, sources, checks = new Map(), stor
 
   return {
     events, runs, boot, start, stop, tick, kick,
-    createRun, answer, control, jump, stopSessions, finish,
+    createRun, answer, control, jump, stopSessions, finish, allowRefused, wip,
     get: (id) => runs.get(id) ?? null,
     list: () => [...runs.values()],
     inbox: () => [...runs.values()].flatMap((r) => (FINAL.has(r.state) ? [] : r.inbox.filter((c) => !c.answer))),
