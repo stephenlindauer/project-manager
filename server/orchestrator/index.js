@@ -267,6 +267,8 @@ export async function createOrchestrator({ app = {}, interactiveWorking, claudeC
       if (e.type === 'assistant') {
         for (const c of e.message?.content ?? []) {
           if (c.type === 'text' && c.text?.trim()) items.push({ kind: 'text', text: c.text })
+          // The structured answer arrives as a tool call; the result line below already shows it.
+          else if (c.type === 'tool_use' && c.name === 'StructuredOutput') continue
           else if (c.type === 'tool_use') items.push({ kind: 'tool', name: c.name, input: brief(c.input) })
         }
       } else if (e.type === 'user') {

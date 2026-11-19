@@ -382,6 +382,69 @@ integration branch, and checking a grok branch out breaks the workflow.
 `store.hydrate` re-derives `worktree.branch` from `git status` so the switch
 (or a checkout in the terminal) shows in the sidebar without a rescan.
 
+## Orchestrator mode
+
+`server/orchestrator/`, off unless `orchestrator.enabled` is set in
+`pm.config.json`. It takes a task from pickup to shipped by running headless
+Claude sessions through a *pipeline* of stages. The design doc is the
+Orchestrator Mode PRD (revision 6). `profiles/README.md` covers setup;
+`scripts/orchestrator-runner-check.js` verifies a machine can run it.
+
+| Path | Role |
+| --- | --- |
+| `engine.js` | The state machine: steps runs, starts sessions, inbox, limits |
+| `runner.js` | tmux-hosted sessions and commands; transcript parsing |
+| `runstore.js` | `orchestrator/runs/<id>/`: run.json, events.jsonl, session files |
+| `config.js` | Four config layers with provenance; adapter discovery; pipeline checks |
+| `permissions.js` | Permission sets per stage kind |
+| `stages/`, `sources/`, `checks/` | One file per stage kind, task source, check kind |
+| `index.js` | Routes, start-a-run flow, hook handling, Rules view |
+
+- **The app is a generic engine; what a machine does with it is config.**
+  Nothing about one tracker, one employer or one machine goes in app code,
+  app defaults or `profiles/`. Machine config, private adapters and the run
+  store live in the gitignored `/orchestrator/` folder (the ignore rule is
+  root-anchored — a bare `orchestrator/` would also ignore `server/orchestrator/`).
+- **Every `step()` must be safe to repeat.** The engine calls the current
+  stage's step once per tick and after every restart, and the step re-derives
+  where it is from files (a session's exit file, an effect's result line).
+  There is no recovery path because there is no in-memory-only state.
+- **Sessions and commands run in `pm-orch-*` tmux sessions and report through
+  files**, never through a pipe to the server, which restarts on every deploy.
+  The engine kills only `pm-orch-` sessions. Deploying this app from a run
+  restarts the engine mid-stage; the deploy job carries on and the new process
+  finds its exit file.
+- **Side effects go through `ctx.effect`** (push, PR, merge, tracker write):
+  an intent line before, a result line after. An intent with no result is
+  resolved by `check()` reading the real state, never by doing it again.
+- **A session never waits on a person.** It runs in `dontAsk` mode with
+  `--permission-prompts none`: an unlisted call is denied at once. A question
+  or a blocking denial ends the session, becomes an inbox card, and the answer
+  resumes the same conversation by session id.
+- **Sessions load the person's own user settings**, which may *allow* things
+  like `gh pr merge`. Allow lists merge and deny wins, so every set except
+  `skill` carries `SIDE_EFFECT_DENY`. Keep it that way: it is what makes
+  "pushes and PRs belong to engine code" true.
+- **Claude Code only loads a project's `CLAUDE.md` in a directory it trusts.**
+  Worktrees under a trusted parent (`~/Projects`) inherit that. The runner
+  check tests it.
+- **Hook events from orchestrator sessions carry `PM_ORCH_RUN`** and are filed
+  under the run by `/api/claude-hook`: no status record, no toast, no sound.
+- **One owner per side effect** (`branch`, `status`, `pr`, `ci`):
+  `resolvePipeline` refuses a pipeline where a stage kind and a skill both own
+  one. A run snapshots its pipeline at creation, so editing config never
+  changes a run in flight.
+- **Orchestrator mode is an overlay in the client.** The project tree and its
+  terminals stay mounted underneath and are told `hidden`, so switching modes
+  never reconnects or resizes a tmux pane.
+- Every route is under `/api`, behind `requireAuth`. Starting a run starts an
+  agent with a shell.
+
+To try a change without touching the installed service, run a second copy:
+`PM_ORCH=1 PM_ORCH_DIR=<dir> PM_PORT=5299 PM_PROJECTS_ROOT=<dir> PM_SHIP=0
+node server/index.js` and `PM_PORT=5299 PM_WEB_PORT=5298 npx vite`. Note that
+copy still reads `pm.config.json`, including `statusWebhook`.
+
 ## Deployment & auth
 
 This machine runs the app as a launchd **LaunchAgent** (`local.projectmanager`),

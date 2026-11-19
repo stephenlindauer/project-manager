@@ -200,7 +200,9 @@ export function createEngine({ machine, kinds, sources, checks = new Map(), stor
     const card = run?.inbox.find((c) => c.id === cardId)
     if (!card) throw new Error('unknown card')
     if (card.answer) throw new Error('already answered')
-    if (card.choices?.length && !card.choices.some((c) => c.id === choice)) throw new Error(`"${choice}" is not one of this card's choices`)
+    if (!choice) throw new Error('a choice is required')
+    // A question may be answered in my own words; every other card is one of its buttons.
+    if (!card.freeText && card.choices?.length && !card.choices.some((c) => c.id === choice)) throw new Error(`"${choice}" is not one of this card's choices`)
     card.answer = { choice, note: note || null, at: Date.now() }
     log(run, { type: 'answer', stage: card.stageId, card: card.id, key: card.key, choice, note: note || null })
 

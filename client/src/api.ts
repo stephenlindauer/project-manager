@@ -1,4 +1,7 @@
-import type { Changes, CleanupResult, CleanupScan, Node, Project, PrsView, Runner, Script, Summary } from './types'
+import type {
+  Changes, CleanupResult, CleanupScan, Node, OrchMeta, OrchRules, OrchRun, OrchRunDetail, OrchState,
+  OrchTranscriptItem, Project, PrsView, Runner, Script, Summary,
+} from './types'
 
 /** Notified whenever a request 401s, so the app can drop back to the login gate. */
 let onUnauthorized: (() => void) | null = null
@@ -39,7 +42,7 @@ export const authApi = {
 const EDITOR_APP = 'Visual Studio Code'
 
 export const api = {
-  meta: () => json<{ projectsRoot: string; terminalBackend: string; ghAvailable: boolean }>('/api/meta'),
+  meta: () => json<{ projectsRoot: string; terminalBackend: string; ghAvailable: boolean; orchestrator?: boolean }>('/api/meta'),
 
   projects: () => json<{ projects: Project[]; nodes: Node[] }>('/api/projects'),
   rescan: () => post<{ projects: Project[]; nodes: Node[] }>('/api/rescan'),
@@ -91,4 +94,20 @@ export const api = {
   open: (path: string, app?: string) => post<{ ok: boolean; error?: string | null }>('/api/open', { path, app }),
   /** Open a worktree in VS Code. Goes through `open -a`, so it needs no `code` on PATH. */
   openInEditor: (path: string) => api.open(path, EDITOR_APP),
+}
+
+/** Orchestrator mode. Every call 404s-as-disabled when the machine has it off. */
+export const orchApi = {
+  meta: () => json<OrchMeta>('/api/orch/meta'),
+  state: () => json<OrchState>('/api/orch/state'),
+  rules: (projectId?: string | null) => json<OrchRules>(`/api/orch/rules${projectId ? `?projectId=${projectId}` : ''}`),
+  start: (body: { projectId: string; brief: string; source?: string; pipeline?: string }) =>
+    post<{ ok: boolean; run: OrchRun }>('/api/orch/runs', body),
+  run: (id: string) => json<OrchRunDetail>(`/api/orch/runs/${id}`),
+  transcript: (id: string, n: number, offset = 0) =>
+    json<{ offset: number; items: OrchTranscriptItem[]; prompt: string | null; err: string }>(`/api/orch/runs/${id}/sessions/${n}?offset=${offset}`),
+  answer: (runId: string, cardId: string, choice: string, note?: string) =>
+    post<{ ok: boolean }>(`/api/orch/runs/${runId}/cards/${cardId}`, { choice, note }),
+  control: (runId: string, action: 'pause' | 'resume' | 'abandon') =>
+    post<{ ok: boolean }>(`/api/orch/runs/${runId}/control`, { action }),
 }

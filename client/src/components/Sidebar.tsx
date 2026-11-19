@@ -5,6 +5,8 @@ import { usePhone } from '../lib/media'
 import type { AttentionState, ClaudeStatus, Node, Runner, ShipOrphan, ShipStatus, ShipVerdict } from '../types'
 import { StatusBadges } from './StatusBadges'
 
+const ORCH_FINAL = new Set(['done', 'abandoned', 'released'])
+
 type Section = { key: string; group: string | null; projects: Map<string, Node[]> }
 
 /**
@@ -101,6 +103,9 @@ export function Sidebar() {
   const togglePin = useStore((s) => s.togglePin)
   const activeOnly = useStore((s) => s.activeOnly)
   const toggleActiveOnly = useStore((s) => s.toggleActiveOnly)
+  const orchOn = useStore((s) => Boolean(s.meta?.orchestrator))
+  const orchBlocking = useStore((s) => s.orch?.inbox.filter((c) => c.blocking).length ?? 0)
+  const orchLive = useStore((s) => s.orch?.runs.filter((r) => !ORCH_FINAL.has(r.state)).length ?? 0)
   const hiddenCount = activeOnly ? nodes.length - tree.reduce((n, s) => n + [...s.projects.values()].reduce((m, l) => m + l.length, 0), 0) : 0
 
   // Hover is deliberately local: it must not race the store's peek timer, and
@@ -137,9 +142,18 @@ export function Sidebar() {
         <span className="text-[12px] font-semibold uppercase tracking-[0.16em] text-accent glow-text">
           Projects
         </span>
+        {orchOn && (
+          <button
+            onClick={() => useStore.getState().setMode('orch')}
+            className={`ml-auto whitespace-nowrap rounded border px-1.5 py-0.5 text-[10px] ${
+              orchBlocking ? 'border-attn/70 text-attn' : 'border-line text-muted hover:border-accent hover:text-ink'
+            }`}
+            title={orchBlocking ? `Orchestrator: ${orchBlocking} waiting on you` : 'Orchestrator: runs and inbox'}
+          >◈{orchBlocking ? ` ${orchBlocking}` : orchLive ? ` ${orchLive}` : ''}</button>
+        )}
         <button
           onClick={() => setPalette(true)}
-          className="ml-auto rounded border border-line px-1.5 py-0.5 text-[10px] text-muted hover:border-accent hover:text-ink"
+          className={`${orchOn ? '' : 'ml-auto '}rounded border border-line px-1.5 py-0.5 text-[10px] text-muted hover:border-accent hover:text-ink`}
           title="Jump to project (⌘K)"
         >⌘K</button>
         <button
@@ -599,6 +613,10 @@ function NodeRow({
     if (active) ref.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
   }, [active])
 
+  // A worktree an orchestrator run owns says so, and what stage the run is at.
+  const orchRun = useStore((s) => s.orch?.runs.find((r) => r.nodeId === node.id && !ORCH_FINAL.has(r.state)) ?? null)
+  const openRun = useStore((s) => s.openRun)
+
   return (
     <div
       ref={ref}
@@ -658,6 +676,13 @@ function NodeRow({
         This line never wraps; the badges truncate before the counters do.
       */}
       <div className="flex items-center gap-2 whitespace-nowrap font-mono text-[11px] leading-4 text-muted">
+        {orchRun && (
+          <button
+            onClick={(e) => { e.stopPropagation(); openRun(orchRun.id) }}
+            className={`min-w-0 shrink truncate ${orchRun.blocking || orchRun.state === 'waiting' ? 'text-attn' : 'text-neon-purple'}`}
+            title={`An orchestrator run owns this worktree (${orchRun.stageId ?? orchRun.state}). Click to open it.`}
+          >◈ {orchRun.stageId ?? orchRun.state}</button>
+        )}
         {claude && <ClaudeBadge status={claude} />}
         {ship && <ShipBadge status={ship} />}
         {running.length > 0 && <RunnerBadge runners={running} />}
